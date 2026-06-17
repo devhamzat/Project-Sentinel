@@ -1,0 +1,49 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "smart-extract"
+version = "0.1.0"
+description = "Smart Data Extraction for Unstructured Data: a hybrid NLP + LLM system that extracts structured entities and relationships from academic research papers into a queryable Neo4j knowledge graph."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "devhamzat" }]
+
+dependencies = [
+    # intake — digital PDF text layer
+    "pymupdf>=1.24",
+    "pdfplumber>=0.11",
+    # intake — image / OCR lane
+    "opencv-python-headless>=4.9",
+    "pytesseract>=0.3.10",
+    "Pillow>=10.0",
+    # NLP / NER
+    "spacy>=3.7",
+    # LLM seam (OpenAI-compatible client)
+    "openai>=1.30",
+    # graph store
+    "neo4j>=5.20",
+    # backend / API
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    # config + corpus download
+    "pydantic-settings>=2.2",
+    "python-dotenv>=1.0",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+smart-extract = "smart_extract.cli.main:main"
+
+[tool.setuptools.packages.find]
+include = ["smart_extract*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

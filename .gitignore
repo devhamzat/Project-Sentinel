@@ -1,0 +1,33 @@
+# ---- secrets / config ----
+.env
+
+# ---- data (frozen corpus + gold set are large / not source) ----
+# Ignore contents but keep the directory structure (.gitkeep) in the repo.
+data/raw/*
+data/gold/*
+data/processed/*
+!data/raw/.gitkeep
+!data/gold/.gitkeep
+
+# ---- python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# ---- testing / tooling ----
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
