@@ -1,3 +1,4 @@
+
 """The LLM seam — the single chokepoint for all model access (CLAUDE.md §9).
 
 Every LLM call in the system goes through this module. It talks to any

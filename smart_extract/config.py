@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "llama-3.1-8b-instant"
 
+    # --- OCR (image/photo lane) ---
+    # Path to the Tesseract engine. Empty => rely on PATH. On Windows the
+    # UB-Mannheim installer's default is C:\Program Files\Tesseract-OCR\.
+    tesseract_cmd: str = ""
+
     # --- Data ---
     data_dir: str = "data"
 
@@ -60,6 +65,25 @@ class Settings(BaseSettings):
     def gold_dir(self) -> Path:
         """Where the hand-labelled gold set lives."""
         return self.data_path / "gold"
+
+    @property
+    def photo_dir(self) -> Path:
+        """Where photographed/scanned copies of the corpus live (Phase 2 eval)."""
+        return self.data_path / "photo"
+
+    @property
+    def resolved_tesseract_cmd(self) -> str | None:
+        """Best path to the Tesseract binary, or None to fall back to PATH.
+
+        Order: explicit ``TESSERACT_CMD`` setting -> common Windows install
+        location -> None (let pytesseract use whatever is on PATH).
+        """
+        if self.tesseract_cmd:
+            return self.tesseract_cmd
+        default_win = Path(r"C:\Program Files\Tesseract-OCR\tesseract.exe")
+        if default_win.exists():
+            return str(default_win)
+        return None
 
 
 @lru_cache

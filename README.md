@@ -33,5 +33,17 @@ Login at http://localhost:7474 with the user/password from `.env`
 python -m smart_extract.scripts.check_neo4j      # verify Neo4j connection
 python -m smart_extract.scripts.download_arxiv   # download & freeze cs.CL corpus
 python -m smart_extract.scripts.spike            # test LLM extraction on one paper
-pytest -q                                        # offline smoke tests
+python -m smart_extract.scripts.make_photos      # make photographed copies (OCR eval)
+pytest -q                                        # smoke + lane tests
 ```
+
+## Ingesting papers
+
+```bash
+smart-extract ingest data/raw/2606.18246v1.pdf     # digital lane (PDF text layer)
+smart-extract ingest data/photo/2606.18246v1_p1.png  # photo lane (OpenCV + Tesseract OCR)
+```
+
+The OCR lane needs the Tesseract engine installed (Windows: UB-Mannheim build,
+incl. the English language data). Set `TESSERACT_CMD` in `.env` only if it is
+not at the default `C:\Program Files\Tesseract-OCR\`.
