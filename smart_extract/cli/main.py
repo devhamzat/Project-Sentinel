@@ -48,8 +48,19 @@ def ingest(path: str) -> int:
         print("FAILED - extraction produced no title and no arXiv id; nothing to store.")
         return 1
 
-    print(f"  title:   {paper['title'] or '(none)'}")
-    print(f"  authors: {len(paper['authors'])} found")
+    print(f"  title:    {paper['title'] or '(none)'}")
+    print(f"  authors:  {len(paper['authors'])}")
+    print(f"  keywords: {len(paper['keywords'])}")
+    print(f"  datasets: {len(paper['datasets'])} (USES)  methods: {len(paper['methods'])}")
+
+    # Surface what the deterministic guards dropped — honest feedback (§12).
+    v = paper.get("_validation", {})
+    if not v.get("spacy_validated", True):
+        print("  note: spaCy model not installed; author/affiliation validation skipped.")
+    for field in ("dropped_datasets", "dropped_authors", "dropped_affiliations"):
+        dropped = v.get(field)
+        if dropped:
+            print(f"  filtered {field.replace('dropped_', '')}: {dropped}")
 
     try:
         with open_store() as store:
@@ -61,7 +72,8 @@ def ingest(path: str) -> int:
 
     print(
         f"OK - stored Paper '{paper['title'] or label}' with "
-        f"{len(paper['authors'])} author(s) in the graph."
+        f"{len(paper['authors'])} author(s), {len(paper['datasets'])} dataset(s) "
+        "in the graph."
     )
     return 0
 

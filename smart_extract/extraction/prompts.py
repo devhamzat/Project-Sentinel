@@ -35,13 +35,18 @@ Return a JSON object with exactly these keys:
   "affiliations": [string, ...],   // distinct institutions named
   "keywords": [string, ...],       // 3-8 topical keywords/terms
   "datasets": [string, ...],       // named datasets the paper USES (empty if none)
+  "methods": [string, ...],        // named methods/models/architectures used or proposed
+  "metrics": [string, ...],        // named evaluation metrics reported (e.g. F1, BLEU, accuracy)
   "summary": string                // a 2-4 sentence plain-English summary
 }
 
 Rules:
 - Use only information present in the provided text.
 - "datasets" must list datasets the paper actually uses or evaluates on,
-  not datasets merely cited in passing.
+  not datasets merely cited in passing. Use the dataset's exact name as written.
+- "methods" are named techniques/models (e.g. "BERT", "self-attention"), not
+  generic phrases.
+- "metrics" are named measures the paper reports results in.
 - Do not include markdown, comments, or any text outside the JSON object.
 """
 

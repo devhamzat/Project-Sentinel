@@ -12,7 +12,7 @@ See `CLAUDE.md` for the full project context, design decisions, and build plan.
 python -m venv .venv
 .venv/Scripts/activate            # Windows
 pip install -e .[dev]
-python -m spacy download en_core_web_sm
+python -m spacy download en_core_web_sm   # NER validator for the hybrid path
 cp .env.example .env              # then fill in Neo4j + LLM settings
 ```
 

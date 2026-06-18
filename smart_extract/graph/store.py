@@ -1,8 +1,8 @@
 """Neo4j graph store: constraints + idempotent (MERGE) writes (CLAUDE.md §6).
 
-Phase 1 writes the minimal thread: a Paper plus its Authors and the
-AUTHORED_BY edges. Later phases extend this with Affiliation, Keyword, Dataset
-and the USES relation.
+Writes the full §6 model: Paper{title, year, summary} plus Author, Affiliation,
+Keyword and Dataset nodes, with AUTHORED_BY, AFFILIATED_WITH, HAS_KEYWORD and
+USES relationships (USES being the project's central contribution).
 
 Paper identity (per the developer's chosen dedup rule):
   1. If an arXiv id is known, MERGE the Paper on ``arxiv_id`` (most stable).
@@ -22,13 +22,19 @@ from neo4j import Driver, GraphDatabase
 
 from smart_extract.config import settings
 
-# Uniqueness constraints. Author/Paper-title get constraints so MERGE is fast and
-# safe; arXiv id is unique when present.
+# Uniqueness constraints make MERGE fast and prevent duplicate entities.
+# arXiv id is unique when present; the other entity keys are their names/terms.
 _CONSTRAINTS = [
     "CREATE CONSTRAINT paper_arxiv IF NOT EXISTS "
     "FOR (p:Paper) REQUIRE p.arxiv_id IS UNIQUE",
     "CREATE CONSTRAINT author_name IF NOT EXISTS "
     "FOR (a:Author) REQUIRE a.name IS UNIQUE",
+    "CREATE CONSTRAINT affiliation_name IF NOT EXISTS "
+    "FOR (x:Affiliation) REQUIRE x.name IS UNIQUE",
+    "CREATE CONSTRAINT keyword_term IF NOT EXISTS "
+    "FOR (k:Keyword) REQUIRE k.term IS UNIQUE",
+    "CREATE CONSTRAINT dataset_name IF NOT EXISTS "
+    "FOR (d:Dataset) REQUIRE d.name IS UNIQUE",
 ]
 
 
@@ -61,9 +67,11 @@ class GraphStore:
     # --- writes --------------------------------------------------------------
 
     def upsert_paper(self, paper: dict[str, Any], arxiv_id: str | None) -> str:
-        """MERGE a Paper + its Authors + AUTHORED_BY edges. Return the paper title.
+        """MERGE a Paper and all its entities/relations. Return the paper title.
 
-        ``paper`` is the normalised extraction dict (see extraction.extract).
+        Writes the full §6 model: Paper + Author (AUTHORED_BY) + Affiliation
+        (AFFILIATED_WITH) + Keyword (HAS_KEYWORD) + Dataset (USES). ``paper`` is
+        the normalised extraction dict (see extraction.extract).
         """
         title = paper.get("title") or ""
         authors = paper.get("authors") or []
@@ -126,6 +134,9 @@ class GraphStore:
             ).single()
 
         eid = record["eid"]
+        affiliations = paper.get("affiliations") or []
+        keywords = paper.get("keywords") or []
+        datasets = paper.get("datasets") or []
 
         # 2) MERGE each Author and the AUTHORED_BY edge onto that exact Paper.
         for name in authors:
@@ -136,6 +147,45 @@ class GraphStore:
                 MERGE (p)-[:AUTHORED_BY]->(a)
                 """,
                 eid=eid, name=name,
+            )
+
+        # 3) Affiliations: (:Author)-[:AFFILIATED_WITH]->(:Affiliation), per §6.
+        #    The LLM gives authors and affiliations as separate lists without a
+        #    per-author mapping, so we link every listed author to every listed
+        #    affiliation. This is exact for single-institution papers (the common
+        #    case) and an over-approximation otherwise — a documented limitation,
+        #    not a silent guess. Refining the mapping is future work.
+        for affiliation in affiliations:
+            for name in authors:
+                tx.run(
+                    """
+                    MATCH (a:Author {name: $name})
+                    MERGE (x:Affiliation {name: $affiliation})
+                    MERGE (a)-[:AFFILIATED_WITH]->(x)
+                    """,
+                    name=name, affiliation=affiliation,
+                )
+
+        # 4) Keywords: (:Paper)-[:HAS_KEYWORD]->(:Keyword).
+        for term in keywords:
+            tx.run(
+                """
+                MATCH (p:Paper) WHERE elementId(p) = $eid
+                MERGE (k:Keyword {term: $term})
+                MERGE (p)-[:HAS_KEYWORD]->(k)
+                """,
+                eid=eid, term=term,
+            )
+
+        # 5) Datasets: (:Paper)-[:USES]->(:Dataset) — the central relation.
+        for dataset in datasets:
+            tx.run(
+                """
+                MATCH (p:Paper) WHERE elementId(p) = $eid
+                MERGE (d:Dataset {name: $dataset})
+                MERGE (p)-[:USES]->(d)
+                """,
+                eid=eid, dataset=dataset,
             )
 
 
