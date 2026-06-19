@@ -1,0 +1,45 @@
+# Local Neo4j for development (CLAUDE.md: storage is Neo4j, not SQL).
+#
+# Start:   docker compose up -d
+# Stop:    docker compose down            (data is kept in the named volumes)
+# Wipe:    docker compose down -v         (deletes the graph)
+# Logs:    docker compose logs -f neo4j
+#
+# Defaults match .env.example (user neo4j / password changeme). To use a
+# different password, set NEO4J_PASSWORD in your shell or .env before `up`:
+#   bolt://localhost:7687  (driver)   http://localhost:7474  (browser UI)
+
+services:
+  neo4j:
+    image: neo4j:5-community
+    container_name: sentinel-neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"   # HTTP browser console
+      - "7687:7687"   # Bolt protocol (the neo4j Python driver connects here)
+    environment:
+      # NEO4J_AUTH is user/password; default matches .env.example. NOTE: Neo4j
+      # only applies this on FIRST boot of the data volume. To change the
+      # password later you must recreate the volume: docker compose down -v.
+      NEO4J_AUTH: "${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-changeme}"
+      # Keep the dev footprint small on a CPU-only machine.
+      NEO4J_server_memory_heap_initial__size: "512m"
+      NEO4J_server_memory_heap_max__size: "1G"
+      NEO4J_server_memory_pagecache_size: "512m"
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      # Use the unauthenticated HTTP readiness endpoint, NOT cypher-shell.
+      # cypher-shell would hammer auth every interval and trip Neo4j's
+      # AuthenticationRateLimit, locking out real clients. This just checks the
+      # server is up and serving.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+
+volumes:
+  neo4j_data:
+  neo4j_logs:

@@ -37,12 +37,39 @@ python -m smart_extract.scripts.make_photos      # make photographed copies (OCR
 pytest -q                                        # smoke + lane tests
 ```
 
-## Ingesting papers
+## Ingesting & querying (CLI)
 
 ```bash
-smart-extract ingest data/raw/2606.18246v1.pdf     # digital lane (PDF text layer)
+smart-extract ingest data/raw/2606.18246v1.pdf       # digital lane (PDF text layer)
 smart-extract ingest data/photo/2606.18246v1_p1.png  # photo lane (OpenCV + Tesseract OCR)
+smart-extract ask "Which papers use the SQuAD dataset?"   # NL -> Cypher -> answer
+smart-extract stats                                  # node/relationship counts
 ```
+
+## Web app (REST API + React dashboard)
+
+```bash
+# Terminal 1 — Python REST API
+uvicorn smart_extract.api.main:app --reload --port 8000   # docs at /docs
+
+# Terminal 2 — React dashboard (presentation layer; talks only to the API)
+cd frontend && npm install && npm run dev                 # http://localhost:5173
+```
+
+The dashboard proxies `/api/*` to the FastAPI backend. The React app holds no
+business logic — the CLI, API, and dashboard all call the same Python service
+layer (`smart_extract/service.py`).
+
+## Evaluation (Chapter 4 numbers)
+
+```bash
+python -m smart_extract.scripts.make_gold_template --limit 20  # pre-fill templates
+#   --> hand-correct each data/gold/<id>.json to the TRUE labels, delete _INSTRUCTIONS
+python -m smart_extract.scripts.make_photos --pages 1          # photo copies for OCR eval
+python -m smart_extract.scripts.evaluate --compare             # P/R/F1, digital vs photo
+```
+
+Numbers come from YOUR hand-labelled gold set — never fabricated.
 
 The OCR lane needs the Tesseract engine installed (Windows: UB-Mannheim build,
 incl. the English language data). Set `TESSERACT_CMD` in `.env` only if it is

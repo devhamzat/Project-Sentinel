@@ -28,6 +28,7 @@ dependencies = [
     # backend / API
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
+    "python-multipart>=0.0.9",  # FastAPI file uploads (/ingest)
     # config + corpus download
     "pydantic-settings>=2.2",
     "python-dotenv>=1.0",

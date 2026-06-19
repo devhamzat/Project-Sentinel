@@ -64,6 +64,32 @@ class GraphStore:
             for stmt in _CONSTRAINTS:
                 session.run(stmt)
 
+    # --- reads ---------------------------------------------------------------
+
+    def run_read(self, cypher: str, **params: Any) -> list[dict[str, Any]]:
+        """Run a read query and return rows as plain dicts.
+
+        Used by the NL->Cypher query path. The caller is responsible for
+        ensuring ``cypher`` is read-only (see query.nl2cypher.is_read_only).
+        """
+        with self._driver.session() as session:
+            result = session.run(cypher, **params)
+            return [record.data() for record in result]
+
+    def counts(self) -> dict[str, int]:
+        """Return node/relationship counts for the dashboard summary."""
+        out: dict[str, int] = {}
+        with self._driver.session() as session:
+            for label in ("Paper", "Author", "Affiliation", "Keyword", "Dataset"):
+                out[label] = session.run(
+                    f"MATCH (x:`{label}`) RETURN count(x) AS n"
+                ).single()["n"]
+            for rel in ("AUTHORED_BY", "AFFILIATED_WITH", "HAS_KEYWORD", "USES"):
+                out[rel] = session.run(
+                    f"MATCH ()-[r:`{rel}`]->() RETURN count(r) AS n"
+                ).single()["n"]
+        return out
+
     # --- writes --------------------------------------------------------------
 
     def upsert_paper(self, paper: dict[str, Any], arxiv_id: str | None) -> str:
