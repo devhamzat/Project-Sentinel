@@ -1,6 +1,6 @@
 """Neo4j graph store: constraints + idempotent (MERGE) writes (CLAUDE.md §6).
 
-Writes the full §6 model: Paper{title, year, summary} plus Author, Affiliation,
+Writes the full  model: Paper{title, year, summary} plus Author, Affiliation,
 Keyword and Dataset nodes, with AUTHORED_BY, AFFILIATED_WITH, HAS_KEYWORD and
 USES relationships (USES being the project's central contribution).
 

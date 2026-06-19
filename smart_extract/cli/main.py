@@ -1,4 +1,4 @@
-"""Command-line interface — a thin door onto the backend (CLAUDE.md §4).
+"""Command-line interface — a thin door onto the backend.
 
 Commands:
     smart-extract ingest <path>     # ingest a PDF or photo into the graph

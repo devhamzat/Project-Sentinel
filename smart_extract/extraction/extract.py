@@ -1,4 +1,4 @@
-"""Run extraction on clean paper text and return a validated dict (CLAUDE.md §4).
+"""Run extraction on clean paper text and return a validated dict.
 
 The hybrid pipeline:
   1. LLM proposes all fields (interpretive content + bibliographic) via the seam.
@@ -9,7 +9,7 @@ The hybrid pipeline:
      - a spaCy NER pass cross-checks authors/affiliations and drops candidates
        it cannot ground in the document (validate, don't extract).
 
-Output is a normalised dict matching the §6 schema, plus a ``_validation``
+Output is a normalised dict matching the  schema, plus a ``_validation``
 block recording what the deterministic layer dropped (useful for the writeup).
 """
 
@@ -81,7 +81,7 @@ def ground_datasets(datasets: list[str], text: str) -> tuple[list[str], list[str
 def extract(text: str) -> dict[str, Any]:
     """Run the full hybrid extraction on clean paper text.
 
-    Returns a normalised §6 dict with deterministic guards applied. A
+    Returns a normalised dict with deterministic guards applied. A
     ``_validation`` key records what was dropped (not stored in the graph).
     Raises LLMError (from the seam) if the model call fails or returns
     unparseable output.

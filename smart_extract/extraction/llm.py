@@ -79,7 +79,7 @@ def extract_json(prompt: str, system: str | None = None) -> dict[str, Any]:
 
     Asks for JSON mode, then parses. If the model wraps JSON in prose or code
     fences, we make one best-effort attempt to recover the object before
-    raising, so a stray ```json fence doesn't crash the pipeline (§12).
+    raising, so a stray ```json fence doesn't crash the pipeline.
     """
     raw = _chat(prompt, system, json_mode=True)
     try:
