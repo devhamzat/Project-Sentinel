@@ -52,6 +52,37 @@ def test_ground_datasets_empty():
     assert ground_datasets([], "anything") == ([], [])
 
 
+def test_ground_datasets_does_not_match_inside_words():
+    from smart_extract.extraction.extract import ground_datasets
+
+    # "SST" must NOT be grounded by the substring inside "crosstalk" — that
+    # would let a hallucinated USES edge through wearing a verified badge.
+    text = "We study crosstalk between attention heads; no benchmark named here."
+    kept, dropped = ground_datasets(["SST"], text)
+    assert kept == []
+    assert dropped == ["SST"]
+
+
+def test_ground_datasets_matches_acronym_as_whole_word():
+    from smart_extract.extraction.extract import ground_datasets
+
+    # The same acronym IS grounded when it appears as a standalone token,
+    # including next to punctuation.
+    kept, _ = ground_datasets(["SST"], "We evaluate on SST, MNLI and RTE.")
+    assert kept == ["SST"]
+
+
+def test_ground_datasets_handles_regex_special_chars():
+    from smart_extract.extraction.extract import ground_datasets
+
+    # Names with regex-special characters (hyphen, dot) must be matched
+    # literally, not interpreted as regex.
+    text = "Trained on CoNLL-2003 for NER."
+    kept, dropped = ground_datasets(["CoNLL-2003", "CoNLL.2003"], text)
+    assert kept == ["CoNLL-2003"]
+    assert dropped == ["CoNLL.2003"]
+
+
 # --- spaCy validation: graceful + correct ----------------------------------
 
 def test_validate_degrades_gracefully_without_model(monkeypatch):

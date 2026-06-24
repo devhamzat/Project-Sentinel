@@ -13,6 +13,7 @@ query containing a write/admin clause before it ever touches the database.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -59,6 +60,9 @@ Cypher: MATCH (p:Paper)-[:USES]->(d:Dataset) WHERE toLower(p.title) CONTAINS 're
 Q: What datasets are used most often?
 Cypher: MATCH (:Paper)-[:USES]->(d:Dataset) RETURN d.name AS dataset, count(*) AS uses ORDER BY uses DESC
 
+Q: Which author has the most papers?
+Cypher: MATCH (p:Paper)-[:AUTHORED_BY]->(a:Author) RETURN a.name AS author, count(p) AS papers ORDER BY papers DESC LIMIT 1
+
 Q: List all papers and their publication year.
 Cypher: MATCH (p:Paper) RETURN p.title AS paper, p.year AS year ORDER BY year
 """
@@ -70,7 +74,11 @@ _SYSTEM = (
     "For matching titles, author names, dataset names, etc., ALWAYS use a "
     "case-insensitive partial match (toLower(x) CONTAINS toLower('...')), never "
     "exact string equality, because stored values may be longer or differently "
-    "cased than the user's phrasing."
+    "cased than the user's phrasing. "
+    "If you ORDER BY or filter on an aggregate like count(...), that aggregate "
+    "MUST also appear in the RETURN clause with an alias; never ORDER BY "
+    "count(*) unless count(*) is also returned. Prefer counting with "
+    "count(node) grouped by the RETURN keys rather than self-joins."
 )
 
 
@@ -83,6 +91,17 @@ class QueryResult:
     question: str
     cypher: str
     rows: list[dict[str, Any]]
+    answer: str = ""  # natural-language phrasing of the rows
+
+
+# System prompt for turning result rows into a plain-English answer.
+_ANSWER_SYSTEM = (
+    "You answer a user's question using ONLY the provided query results from a "
+    "knowledge graph of academic papers. Write one or two natural sentences. "
+    "If the results are empty, say plainly that the graph contains nothing "
+    "matching, and (if helpful) mention what kinds of things it does contain. "
+    "Never invent data that is not in the results. Be concise."
+)
 
 
 def is_read_only(cypher: str) -> bool:
@@ -102,17 +121,8 @@ def _clean_cypher(raw: str) -> str:
     return text.strip()
 
 
-def to_cypher(question: str) -> str:
-    """Translate a question to Cypher via the LLM seam (no execution)."""
-    prompt = (
-        f"{SCHEMA_DESCRIPTION}\n{_FEW_SHOT}\n"
-        f"Q: {question}\nCypher:"
-    )
-    try:
-        raw = complete(prompt, system=_SYSTEM)
-    except LLMError as exc:
-        raise QueryError(f"Could not generate a query: {exc}") from exc
-
+def _finalise(raw: str) -> str:
+    """Clean LLM output and enforce the read-only guard. Raises QueryError."""
     cypher = _clean_cypher(raw)
     if not cypher:
         raise QueryError("The model returned an empty query.")
@@ -124,25 +134,105 @@ def to_cypher(question: str) -> str:
     return cypher
 
 
+def _sample_block(samples: dict[str, list[str]] | None) -> str:
+    """Render real graph values into a prompt hint, or empty if none."""
+    if not samples:
+        return ""
+    lines = ["Real values currently in the graph (match the user's wording to these):"]
+    for key, values in samples.items():
+        if values:
+            shown = ", ".join(values[:12])
+            lines.append(f"  {key}: {shown}")
+    return "\n".join(lines) + "\n" if len(lines) > 1 else ""
+
+
+def to_cypher(question: str, samples: dict[str, list[str]] | None = None) -> str:
+    """Translate a question to Cypher via the LLM seam (no execution).
+
+    ``samples`` are real values from the graph; including them helps the model
+    map vague wording to entities that actually exist.
+    """
+    prompt = (
+        f"{SCHEMA_DESCRIPTION}\n{_sample_block(samples)}{_FEW_SHOT}\n"
+        f"Q: {question}\nCypher:"
+    )
+    try:
+        raw = complete(prompt, system=_SYSTEM)
+    except LLMError as exc:
+        raise QueryError(f"Could not generate a query: {exc}") from exc
+    return _finalise(raw)
+
+
+def repair_cypher(question: str, bad_cypher: str, error: str) -> str:
+    """Ask the LLM to fix a Cypher query that failed, given the DB error."""
+    prompt = (
+        f"{SCHEMA_DESCRIPTION}\n"
+        "The following Cypher query failed. Fix it so it is valid and answers "
+        "the question. Output ONLY the corrected read-only Cypher.\n\n"
+        f"Question: {question}\n"
+        f"Broken query: {bad_cypher}\n"
+        f"Neo4j error: {error}\n"
+        "Corrected Cypher:"
+    )
+    try:
+        raw = complete(prompt, system=_SYSTEM)
+    except LLMError as exc:
+        raise QueryError(f"Could not repair the query: {exc}") from exc
+    return _finalise(raw)
+
+
+def phrase_answer(
+    question: str, rows: list[dict[str, Any]], samples: dict[str, list[str]] | None
+) -> str:
+    """Turn result rows into a plain-English answer (graceful when empty)."""
+    if rows:
+        preview = rows[:30]
+        body = f"Question: {question}\nResults (JSON): {json.dumps(preview, default=str)}"
+    else:
+        hint = _sample_block(samples).strip()
+        body = (
+            f"Question: {question}\nResults: (none)\n{hint}\n"
+            "Tell the user nothing matched, and what the graph does contain."
+        )
+    try:
+        return complete(body, system=_ANSWER_SYSTEM).strip()
+    except LLMError:
+        # Phrasing is a nicety; never fail the whole query because of it.
+        return ""
+
+
 def ask(question: str, store: GraphStore | None = None) -> QueryResult:
     """Answer a natural-language question against the graph.
 
-    Translates to Cypher, verifies it is read-only, runs it, and returns the
-    question, the Cypher, and the result rows.
+    Pipeline: gather real sample values -> translate to Cypher (grounded in
+    those values) -> run (with one self-healing repair pass on DB error) ->
+    phrase the rows as a natural-language answer.
     """
-    cypher = to_cypher(question)
 
-    def _run(s: GraphStore) -> list[dict[str, Any]]:
+    def _answer(s: GraphStore) -> QueryResult:
         try:
-            return s.run_read(cypher)
-        except Exception as exc:  # noqa: BLE001 - bad generated Cypher, surface it
-            raise QueryError(
-                f"The generated query failed to run:\n{cypher}\n\n{exc}"
-            ) from exc
+            samples = s.sample_values()
+        except Exception:  # noqa: BLE001 - sampling is best-effort
+            samples = None
+
+        cypher = to_cypher(question, samples)
+        try:
+            rows = s.run_read(cypher)
+        except Exception as first_exc:  # noqa: BLE001 - try one repair pass
+            try:
+                cypher = repair_cypher(question, cypher, str(first_exc))
+                rows = s.run_read(cypher)
+            except QueryError:
+                raise
+            except Exception:  # noqa: BLE001 - repair also failed
+                raise QueryError(
+                    f"The generated query failed to run:\n{cypher}\n\n{first_exc}"
+                ) from first_exc
+
+        answer = phrase_answer(question, rows, samples)
+        return QueryResult(question=question, cypher=cypher, rows=rows, answer=answer)
 
     if store is not None:
-        rows = _run(store)
-    else:
-        with open_store() as s:
-            rows = _run(s)
-    return QueryResult(question=question, cypher=cypher, rows=rows)
+        return _answer(store)
+    with open_store() as s:
+        return _answer(s)

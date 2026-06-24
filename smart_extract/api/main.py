@@ -48,6 +48,7 @@ class AskResponse(BaseModel):
     question: str
     cypher: str
     rows: list[dict]
+    answer: str
 
 
 @app.get("/health")
@@ -74,7 +75,12 @@ def ask(req: AskRequest) -> AskResponse:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc))
-    return AskResponse(question=result.question, cypher=result.cypher, rows=result.rows)
+    return AskResponse(
+        question=result.question,
+        cypher=result.cypher,
+        rows=result.rows,
+        answer=result.answer,
+    )
 
 
 @app.post("/ingest")

@@ -70,10 +70,13 @@ def _cmd_ask(question: str) -> int:
         print(f"FAILED - {exc}")
         return 1
 
-    print(f"Cypher: {result.cypher}\n")
+    if result.answer:
+        print(result.answer + "\n")
+    print(f"Cypher: {result.cypher}")
     if not result.rows:
-        print("(no results)")
+        print("(no rows)")
         return 0
+    print()
     for row in result.rows:
         print("  " + ", ".join(f"{k}={v}" for k, v in row.items()))
     print(f"\n{len(result.rows)} row(s).")
@@ -93,7 +96,7 @@ def _cmd_stats() -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="smart-extract",
+        prog="sentinel",
         description="Smart Data Extraction — papers into a Neo4j knowledge graph.",
     )
     sub = parser.add_subparsers(dest="command", required=True)

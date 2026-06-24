@@ -90,6 +90,31 @@ class GraphStore:
                 ).single()["n"]
         return out
 
+    def sample_values(self, limit: int = 12) -> dict[str, list[str]]:
+        """Return a few real values per entity type to ground the NL->Cypher prompt.
+
+        Giving the model the actual dataset/author/keyword names that exist helps
+        it map a vague question to what is really in the graph (fewer empty
+        results from name/casing mismatches).
+        """
+        plan = {
+            "datasets": ("Dataset", "name"),
+            "keywords": ("Keyword", "term"),
+            "authors": ("Author", "name"),
+            "affiliations": ("Affiliation", "name"),
+            "paper_titles": ("Paper", "title"),
+        }
+        out: dict[str, list[str]] = {}
+        with self._driver.session() as session:
+            for key, (label, prop) in plan.items():
+                rows = session.run(
+                    f"MATCH (x:`{label}`) WHERE x.`{prop}` IS NOT NULL "
+                    f"RETURN x.`{prop}` AS v LIMIT $limit",
+                    limit=limit,
+                )
+                out[key] = [r["v"] for r in rows]
+        return out
+
     # --- writes --------------------------------------------------------------
 
     def upsert_paper(self, paper: dict[str, Any], arxiv_id: str | None) -> str:

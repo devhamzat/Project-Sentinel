@@ -15,6 +15,7 @@ block recording what the deterministic layer dropped (useful for the writeup).
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from smart_extract.extraction.llm import extract_json
@@ -65,15 +66,32 @@ def normalise(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _occurs_as_word(name: str, text: str) -> bool:
+    """True if ``name`` appears in ``text`` on whole-word boundaries.
+
+    We use a word-boundary regex rather than a plain substring test: short
+    dataset acronyms (SST, QA, RTE, ...) would otherwise spuriously "ground"
+    inside unrelated words (e.g. "SST" inside "crosstalk"), letting a
+    hallucinated USES edge through wearing a verified badge. ``re.escape``
+    keeps names with regex-special characters (e.g. "CoNLL-2003") literal.
+    """
+    name = name.strip()
+    if not name:
+        return False
+    return re.search(rf"\b{re.escape(name)}\b", text, re.IGNORECASE) is not None
+
+
 def ground_datasets(datasets: list[str], text: str) -> tuple[list[str], list[str]]:
     """Keep only datasets whose name occurs in the paper text (case-insensitive).
 
     Returns (kept, dropped). This is the deterministic guard on the USES
     relation — the project's central contribution — against the most common
     LLM hallucination: naming a plausible benchmark the paper never used.
+
+    Matching is whole-word (see ``_occurs_as_word``) so short acronyms do not
+    spuriously match inside longer words.
     """
-    haystack = text.lower()
-    kept = [d for d in datasets if d.lower() in haystack]
+    kept = [d for d in datasets if _occurs_as_word(d, text)]
     dropped = [d for d in datasets if d not in kept]
     return kept, dropped
 

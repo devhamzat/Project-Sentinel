@@ -51,6 +51,78 @@ def test_to_cypher_refuses_write_query(monkeypatch):
         nl2cypher.to_cypher("delete everything")
 
 
+class _FakeStore:
+    """Fails the first query, succeeds on the (repaired) second."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def sample_values(self, limit=12):
+        return {"datasets": ["CORE-Bench"]}
+
+    def run_read(self, cypher, **params):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("SyntaxError: bad aggregation in ORDER BY")
+        return [{"ok": 1}]
+
+
+def test_ask_retries_on_failure(monkeypatch):
+    from smart_extract.query import nl2cypher
+
+    # complete() is called for: to_cypher, repair_cypher, then phrase_answer.
+    replies = iter([
+        "MATCH (p:Paper) RETURN p ORDER BY count(*)",   # initial -> store rejects
+        "MATCH (p:Paper) RETURN count(p) AS n",          # repaired -> store ok
+        "There is 1 paper.",                             # phrased answer
+    ])
+    monkeypatch.setattr(nl2cypher, "complete", lambda *a, **k: next(replies))
+
+    store = _FakeStore()
+    result = nl2cypher.ask("how many papers", store=store)
+    assert store.calls == 2          # original failed, repair ran
+    assert result.rows == [{"ok": 1}]
+    assert "count(p)" in result.cypher
+    assert result.answer == "There is 1 paper."
+
+
+def test_ask_reports_error_when_repair_also_fails(monkeypatch):
+    from smart_extract.query import nl2cypher
+
+    monkeypatch.setattr(nl2cypher, "complete",
+                        lambda *a, **k: "MATCH (p:Paper) RETURN p ORDER BY count(*)")
+
+    class AlwaysFails:
+        def sample_values(self, limit=12):
+            return {}
+
+        def run_read(self, cypher, **params):
+            raise RuntimeError("still broken")
+
+    with pytest.raises(nl2cypher.QueryError):
+        nl2cypher.ask("q", store=AlwaysFails())
+
+
+def test_phrase_answer_handles_empty_and_never_raises(monkeypatch):
+    from smart_extract.query import nl2cypher
+
+    # Even if phrasing the answer errors, it must degrade to "" not crash.
+    def boom(*a, **k):
+        raise nl2cypher.LLMError("model down")
+
+    monkeypatch.setattr(nl2cypher, "complete", boom)
+    assert nl2cypher.phrase_answer("q", [], {"datasets": ["X"]}) == ""
+
+
+def test_sample_block_renders_real_values():
+    from smart_extract.query.nl2cypher import _sample_block
+
+    out = _sample_block({"datasets": ["CORE-Bench", "PaperBench"], "keywords": []})
+    assert "CORE-Bench" in out and "datasets" in out
+    assert _sample_block(None) == ""
+    assert _sample_block({"datasets": []}) == ""
+
+
 # --- evaluation metrics -----------------------------------------------------
 
 def test_prf_basic():
