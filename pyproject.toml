@@ -41,7 +41,7 @@ dev = [
 ]
 
 [project.scripts]
-smart-extract = "smart_extract.cli.main:main"
+sentinel = "smart_extract.cli.main:main"
 
 [tool.setuptools.packages.find]
 include = ["smart_extract*"]

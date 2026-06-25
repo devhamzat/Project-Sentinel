@@ -1,9 +1,9 @@
 """Command-line interface — a thin door onto the backend.
 
 Commands:
-    smart-extract ingest <path>     # ingest a PDF or photo into the graph
-    smart-extract ask "<question>"  # natural-language query (NL -> Cypher)
-    smart-extract stats             # node/relationship counts
+    sentinel ingest <path>     # ingest a PDF or photo into the graph
+    sentinel ask "<question>"  # natural-language query (NL -> Cypher)
+    sentinel stats             # node/relationship counts
 
 Or without the console script: python -m smart_extract.cli.main <command> ...
 
@@ -97,7 +97,7 @@ def _cmd_stats() -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sentinel",
-        description="Smart Data Extraction — papers into a Neo4j knowledge graph.",
+        description="Smart Data Extraction - papers into a Neo4j knowledge graph.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -111,7 +111,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _force_utf8_output() -> None:
+    """Make stdout/stderr UTF-8 so printing non-Latin-1 metadata never crashes.
+
+    On Windows the console defaults to cp1252; a paper whose title or author
+    name contains an accented or non-Latin character would otherwise raise
+    UnicodeEncodeError at print() time (after extraction, before the graph
+    write), silently dropping the paper. ``errors="replace"`` degrades an
+    unrepresentable glyph to '?' rather than ever failing.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):  # already detached / not reconfigurable
+                pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _force_utf8_output()
     args = build_parser().parse_args(argv)
     if args.command == "ingest":
         return _cmd_ingest(args.path)
