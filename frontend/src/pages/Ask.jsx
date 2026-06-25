@@ -4,14 +4,34 @@ import { ask, ingest } from "../api.js";
 let idSeq = 0;
 const nextId = () => ++idSeq;
 
+function SendIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none"
+      stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="14" y1="2" x2="2" y2="8" />
+      <line x1="14" y1="2" x2="10" y2="14" />
+      <line x1="2" y1="8" x2="10" y2="14" />
+    </svg>
+  );
+}
+
+function AttachIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none"
+      stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13.5 7.5l-6 6a4 4 0 0 1-5.66-5.66l6.5-6.5a2.5 2.5 0 0 1 3.54 3.54L5.36 11.4a1 1 0 0 1-1.42-1.42L9.5 4.5" />
+    </svg>
+  );
+}
+
 function ResultRows({ rows }) {
   if (!rows.length) {
-    return <p className="muted">query ran — nothing in the graph matched.</p>;
+    return <p className="muted" style={{ fontSize: "0.8rem", marginTop: "0.4rem" }}>Query ran — nothing matched.</p>;
   }
   const cols = Object.keys(rows[0]);
   return (
-    <>
-      <table>
+    <div style={{ marginTop: "0.6rem" }}>
+      <table className="result-table">
         <thead>
           <tr>{cols.map((c) => <th key={c}>{c}</th>)}</tr>
         </thead>
@@ -21,8 +41,8 @@ function ResultRows({ rows }) {
           ))}
         </tbody>
       </table>
-      <p className="rowcount">{rows.length} row(s)</p>
-    </>
+      <p className="rowcount">{rows.length} row{rows.length !== 1 ? "s" : ""}</p>
+    </div>
   );
 }
 
@@ -34,19 +54,30 @@ function Message({ msg }) {
       </div>
     );
   }
-  // assistant
   return (
     <div className="msg bot">
+      <div className="msg-avatar">AI</div>
       <div className="bubble">
-        {msg.kind === "error" && <p className="error">{msg.text}</p>}
+        {msg.kind === "pending" && (
+          <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span className="spinner" />
+            <span className="muted" style={{ fontSize: "0.8rem" }}>Thinking…</span>
+          </span>
+        )}
+        {msg.kind === "error" && (
+          <span className="text-error" style={{ fontSize: "0.83rem" }}>{msg.text}</span>
+        )}
         {msg.kind === "rows" && (
           <>
             {msg.answer && <p className="answer">{msg.answer}</p>}
-            {msg.rows.length > 0 && <ResultRows rows={msg.rows} />}
+            <ResultRows rows={msg.rows} />
           </>
         )}
-        {msg.kind === "note" && <p className={msg.ok ? "ok" : "muted"}>{msg.text}</p>}
-        {msg.kind === "pending" && <p className="muted">…</p>}
+        {msg.kind === "note" && (
+          <span className={msg.ok ? "text-ok" : "muted"} style={{ fontSize: "0.83rem" }}>
+            {msg.text}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -57,7 +88,7 @@ export default function Ask({ onIngested }) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
-  const endRef = useRef(null);
+  const endRef  = useRef(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -96,7 +127,7 @@ export default function Ask({ onIngested }) {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = "";
-    push({ role: "user", text: `+ ${file.name}` });
+    push({ role: "user", text: `Ingesting: ${file.name}` });
     push({ role: "assistant", kind: "pending" });
     setBusy(true);
     try {
@@ -106,8 +137,10 @@ export default function Ask({ onIngested }) {
         kind: "note",
         ok: true,
         text:
-          `stored "${r.title}" (${r.source_kind} lane): ` +
-          `${c.authors} authors · ${c.datasets} datasets · ${c.keywords} keywords`,
+          `Stored "${r.title}" (${r.source_kind} lane) — ` +
+          `${c.authors} author${c.authors !== 1 ? "s" : ""} · ` +
+          `${c.datasets} dataset${c.datasets !== 1 ? "s" : ""} · ` +
+          `${c.keywords} keyword${c.keywords !== 1 ? "s" : ""}`,
       });
       onIngested?.();
     } catch (err) {
@@ -118,42 +151,54 @@ export default function Ask({ onIngested }) {
   }
 
   return (
-    <section className="chat">
+    <div className="chat">
+      <div className="page-header" style={{ marginBottom: "1rem" }}>
+        <h1 className="page-title">Ask</h1>
+        <p className="page-desc">Ask questions in plain English — or attach a paper to ingest it.</p>
+      </div>
+
       <div className="chat-log">
         {messages.length === 0 && (
-          <p className="muted chat-empty">
-            ask about papers, authors, datasets, keywords… or hit + to add a paper.
-          </p>
+          <div className="chat-empty">
+            <span className="chat-empty-icon">🔍</span>
+            Ask about papers, authors, datasets, or keywords.<br />
+            Hit the paperclip to add a new paper.
+          </div>
         )}
         {messages.map((m) => <Message key={m.id} msg={m} />)}
         <div ref={endRef} />
       </div>
 
-      <form onSubmit={submit} className="prompt chat-input">
-        <button
-          type="button"
-          className="plus"
-          title="ingest a paper"
-          onClick={() => fileRef.current?.click()}
-          disabled={busy}
-        >
-          +
-        </button>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".pdf,.png,.jpg,.jpeg"
-          onChange={onFile}
-          style={{ display: "none" }}
-        />
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="which papers use core-bench?"
-          aria-label="question"
-        />
-        <button disabled={busy}>{busy ? "…" : "run"}</button>
-      </form>
-    </section>
+      <div className="chat-input-wrap">
+        <form onSubmit={submit} className="chat-input">
+          <button
+            type="button"
+            className="chat-attach"
+            title="Ingest a paper"
+            onClick={() => fileRef.current?.click()}
+            disabled={busy}
+          >
+            <AttachIcon />
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".pdf,.png,.jpg,.jpeg"
+            onChange={onFile}
+            style={{ display: "none" }}
+          />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Which papers use BERT?"
+            aria-label="question"
+            disabled={busy}
+          />
+          <button type="submit" className="chat-send" disabled={busy || !q.trim()}>
+            {busy ? <span className="spinner" style={{ borderTopColor: "#fff" }} /> : <SendIcon />}
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }
