@@ -1,8 +1,36 @@
 import { useEffect, useRef, useState } from "react";
 import { ask, ingest } from "../api.js";
 
+const STORAGE_KEY = "sentinel-chat-history";
+const MAX_STORED = 200;
+
 let idSeq = 0;
 const nextId = () => ++idSeq;
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const msgs = JSON.parse(raw);
+    // drop any pending messages left over from a crashed session
+    return msgs.filter((m) => m.kind !== "pending");
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(messages) {
+  try {
+    // only persist settled messages; cap to avoid blowing up storage
+    const settled = messages.filter((m) => m.kind !== "pending");
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(settled.slice(-MAX_STORED))
+    );
+  } catch {
+    /* storage quota — silently ignore */
+  }
+}
 
 function SendIcon() {
   return (
@@ -84,11 +112,15 @@ function Message({ msg }) {
 }
 
 export default function Ask({ onIngested }) {
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState(() => loadHistory());
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const fileRef = useRef(null);
   const endRef  = useRef(null);
+
+  useEffect(() => {
+    saveHistory(messages);
+  }, [messages]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -150,11 +182,28 @@ export default function Ask({ onIngested }) {
     }
   }
 
+  function clearHistory() {
+    setMessages([]);
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
   return (
     <div className="chat">
-      <div className="page-header" style={{ marginBottom: "1rem" }}>
-        <h1 className="page-title">Ask</h1>
-        <p className="page-desc">Ask questions in plain English — or attach a paper to ingest it.</p>
+      <div className="page-header" style={{ marginBottom: "1rem", display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
+        <div>
+          <h1 className="page-title">Ask</h1>
+          <p className="page-desc">Ask questions in plain English — or attach a paper to ingest it.</p>
+        </div>
+        {messages.length > 0 && (
+          <button
+            className="btn btn-ghost"
+            onClick={clearHistory}
+            disabled={busy}
+            style={{ marginTop: "0.25rem", flexShrink: 0 }}
+          >
+            Clear history
+          </button>
+        )}
       </div>
 
       <div className="chat-log">

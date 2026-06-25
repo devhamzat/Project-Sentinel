@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { THEMES } from "../useTheme.js";
+import Docs from "./Docs.jsx";
 
 const THEME_META = {
   light: { name: "Light",    desc: "Clean white"    },
@@ -18,14 +20,9 @@ function ThemePreview({ theme }) {
   );
 }
 
-export default function Settings({ theme, setTheme }) {
+function Appearance({ theme, setTheme }) {
   return (
-    <div>
-      <div className="page-header">
-        <h1 className="page-title">Settings</h1>
-        <p className="page-desc">Appearance and display preferences.</p>
-      </div>
-
+    <>
       <div className="settings-section">
         <div className="settings-title">Theme</div>
         <div className="theme-grid">
@@ -60,6 +57,40 @@ export default function Settings({ theme, setTheme }) {
             <span className="kv-key-mono" style={{ fontSize: "0.78rem" }}>v0.1.0</span>
           </div>
         </div>
+      </div>
+    </>
+  );
+}
+
+const SETTING_TABS = [
+  { id: "appearance", label: "Appearance" },
+  { id: "docs",       label: "Docs"       },
+];
+
+export default function Settings({ theme, setTheme }) {
+  const [activeTab, setActiveTab] = useState("appearance");
+
+  return (
+    <div>
+      <div className="page-header">
+        <h1 className="page-title">Settings</h1>
+      </div>
+
+      <div className="settings-tabs">
+        {SETTING_TABS.map((t) => (
+          <button
+            key={t.id}
+            className={`settings-tab ${activeTab === t.id ? "active" : ""}`}
+            onClick={() => setActiveTab(t.id)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="settings-tab-body">
+        {activeTab === "appearance" && <Appearance theme={theme} setTheme={setTheme} />}
+        {activeTab === "docs"       && <Docs />}
       </div>
     </div>
   );

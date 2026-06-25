@@ -49,11 +49,23 @@ function IconSettings() {
   );
 }
 
+function IconDocs() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
+      strokeLinecap="round" strokeLinejoin="round" className="tab-icon">
+      <path d="M3 2h7l3 3v9a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" />
+      <polyline points="10 2 10 5 13 5" />
+      <line x1="5" y1="8" x2="11" y2="8" />
+      <line x1="5" y1="11" x2="9" y2="11" />
+    </svg>
+  );
+}
+
 const TABS = [
-  { id: "dashboard", label: "Dashboard",  Icon: IconGraph    },
-  { id: "ask",       label: "Ask",         Icon: IconAsk      },
-  { id: "ingest",    label: "Ingest",      Icon: IconIngest   },
-  { id: "settings",  label: "Settings",    Icon: IconSettings },
+  { id: "dashboard", label: "Dashboard", Icon: IconGraph    },
+  { id: "ask",       label: "Ask",        Icon: IconAsk      },
+  { id: "ingest",    label: "Ingest",     Icon: IconIngest   },
+  { id: "settings",  label: "Settings",   Icon: IconSettings },
 ];
 
 export default function App() {

@@ -961,6 +961,199 @@ code, pre, .mono {
 .mt-2 { margin-top: 1rem; }
 .mt-3 { margin-top: 1.5rem; }
 
+/* ─── Settings inner tabs ───────────────────────────────────────────────── */
+
+.settings-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 1.75rem;
+}
+
+.settings-tab {
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--soft);
+  padding: 0.6rem 1.1rem;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.settings-tab:hover { color: var(--ink2); }
+
+.settings-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.settings-tab-body { }
+
+/* ─── Docs page ─────────────────────────────────────────────────────────── */
+
+.docs-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 2rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.docs-nav-link {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--soft);
+  text-decoration: none;
+  padding: 0.3rem 0.7rem;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.docs-nav-link:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.docs-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.docs-section {
+  padding: 1.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.docs-section:last-child {
+  border-bottom: 0;
+}
+
+.docs-section-title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  margin-bottom: 1rem;
+}
+
+.docs-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  font-size: 0.85rem;
+  color: var(--ink2);
+  line-height: 1.7;
+}
+
+.docs-content p { margin: 0; }
+
+.docs-content code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.8em;
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--accent);
+}
+
+.docs-content strong { font-weight: 600; color: var(--ink); }
+
+.docs-table-wrap {
+  overflow-x: auto;
+}
+
+.docs-note {
+  background: var(--accent-bg);
+  border-left: 3px solid var(--accent);
+  padding: 0.65rem 0.9rem;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 0.82rem;
+  color: var(--ink2);
+  line-height: 1.6;
+}
+
+.docs-note code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.85em;
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--accent);
+}
+
+/* Pipeline diagram */
+.docs-pipeline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.25rem;
+}
+
+.pipeline-step {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--surface2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.85rem;
+  min-width: 80px;
+}
+
+.pipeline-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--softer);
+}
+
+.pipeline-value {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.pipeline-arrow {
+  color: var(--softer);
+  font-size: 0.9rem;
+  padding: 0 2px;
+}
+
+/* HTTP method badges */
+.http-badge {
+  display: inline-block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.03em;
+}
+
+.http-badge.get  { background: #dbeafe; color: #1d4ed8; }
+.http-badge.post { background: #dcfce7; color: #15803d; }
+
+:root[data-theme="dark"] .http-badge.get  { background: #1e3a5f; color: #93c5fd; }
+:root[data-theme="dark"] .http-badge.post { background: #14532d; color: #86efac; }
+:root[data-theme="mono"] .http-badge.get  { background: #f0f0f0; color: #111; }
+:root[data-theme="mono"] .http-badge.post { background: #e0e0e0; color: #111; }
+
 /* ─── Scrollbars ────────────────────────────────────────────────────────── */
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
