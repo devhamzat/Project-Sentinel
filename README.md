@@ -40,10 +40,10 @@ pytest -q                                        # smoke + lane tests
 ## Ingesting & querying (CLI)
 
 ```bash
-smart-extract ingest data/raw/2606.18246v1.pdf       # digital lane (PDF text layer)
-smart-extract ingest data/photo/2606.18246v1_p1.png  # photo lane (OpenCV + Tesseract OCR)
-smart-extract ask "Which papers use the SQuAD dataset?"   # NL -> Cypher -> answer
-smart-extract stats                                  # node/relationship counts
+sentinel ingest data/raw/2606.18246v1.pdf       # digital lane (PDF text layer)
+sentinel ingest data/photo/2606.18246v1_p1.png  # photo lane (OpenCV + Tesseract OCR)
+sentinel ask "Which papers use the SQuAD dataset?"   # NL -> Cypher -> answer
+sentinel stats                                  # node/relationship counts
 ```
 
 ## Web app (REST API + React dashboard)
