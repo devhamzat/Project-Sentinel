@@ -35,15 +35,35 @@ from smart_extract.intake.pdf import read_pdf
 
 
 def _load_gold() -> list[dict[str, Any]]:
-    """Load hand-corrected gold files (skip uncorrected templates)."""
+    """Load hand-corrected gold files, refusing uncorrected templates.
+
+    A file still carrying the ``_INSTRUCTIONS`` key holds the model's own
+    pre-fill, not a human label. Scoring against it would measure the model
+    against itself and produce meaningless, near-perfect numbers — exactly the
+    fabricated result §13 forbids. So such files are never loaded as gold, and
+    we make the situation loud rather than letting a low "Loaded N" slip by.
+    """
     gold_dir = settings.gold_dir
     gold: list[dict[str, Any]] = []
+    uncorrected: list[str] = []
     for path in sorted(gold_dir.glob("*.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
         if "_INSTRUCTIONS" in data:
-            print(f"  skip (still a template, not corrected): {path.name}")
+            uncorrected.append(path.name)
             continue
         gold.append(data)
+
+    if uncorrected:
+        total = len(gold) + len(uncorrected)
+        print(
+            f"\n!!  {len(uncorrected)}/{total} gold file(s) are still uncorrected "
+            f"templates (they carry the _INSTRUCTIONS marker) and were EXCLUDED.\n"
+            f"    These hold the model's own guesses; scoring against them would "
+            f"grade the model against itself (§13). Hand-correct each against the "
+            f"paper and delete the _INSTRUCTIONS key.\n"
+            f"    Helper:  python -m smart_extract.scripts.label_gold\n"
+            f"    Excluded: {', '.join(uncorrected)}\n"
+        )
     return gold
 
 
@@ -102,8 +122,9 @@ def main() -> int:
 
     gold = _load_gold()
     if not gold:
-        print("No corrected gold files in data/gold/. Run make_gold_template, "
-              "hand-correct the JSON files, then re-run.")
+        print("No corrected gold files in data/gold/ — refusing to evaluate.\n"
+              "Every file is either missing or still an uncorrected template.\n"
+              "Label them with:  python -m smart_extract.scripts.label_gold")
         return 1
     print(f"Loaded {len(gold)} hand-labelled paper(s).")
 
