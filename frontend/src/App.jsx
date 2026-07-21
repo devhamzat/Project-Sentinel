@@ -1,9 +1,11 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Dashboard from "./pages/Dashboard.jsx";
 import Ask from "./pages/Ask.jsx";
 import Ingest from "./pages/Ingest.jsx";
 import Settings from "./pages/Settings.jsx";
+import Login from "./pages/Login.jsx";
 import { useTheme } from "./useTheme.js";
+import { getMe, logout as endSession } from "./api.js";
 
 function IconGraph() {
   return (
@@ -69,10 +71,43 @@ const TABS = [
 ];
 
 export default function App() {
+  const [user, setUser] = useState(null);
+  const [authReady, setAuthReady] = useState(false);
   const [tab, setTab] = useState("dashboard");
   const [theme, setTheme] = useTheme();
   const [ingestTick, setIngestTick] = useState(0);
   const bumpStats = () => setIngestTick((n) => n + 1);
+
+  useEffect(() => {
+    let active = true;
+    getMe()
+      .then((current) => { if (active) setUser(current); })
+      .catch(() => { if (active) setUser(null); })
+      .finally(() => { if (active) setAuthReady(true); });
+    const expired = () => setUser(null);
+    window.addEventListener("sentinel-auth-expired", expired);
+    return () => {
+      active = false;
+      window.removeEventListener("sentinel-auth-expired", expired);
+    };
+  }, []);
+
+  async function logout() {
+    try {
+      await endSession();
+    } finally {
+      setUser(null);
+      setTab("dashboard");
+    }
+  }
+
+  if (!authReady) {
+    return <main className="auth-shell"><span className="spinner" aria-label="Loading session" /></main>;
+  }
+
+  if (!user) {
+    return <Login onAuthenticated={setUser} />;
+  }
 
   return (
     <div className="shell">
@@ -105,15 +140,16 @@ export default function App() {
         </nav>
 
         <div className="sidebar-foot">
+          <span className="sidebar-user">{user.email}</span>
           hybrid nlp + llm<br />neo4j knowledge graph
         </div>
       </aside>
 
       <main className="content">
         {tab === "dashboard" && <Dashboard key={ingestTick} />}
-        {tab === "ask"       && <Ask onIngested={bumpStats} />}
+        {tab === "ask"       && <Ask key={user.id} userId={user.id} onIngested={bumpStats} />}
         {tab === "ingest"    && <Ingest onIngested={bumpStats} />}
-        {tab === "settings"  && <Settings theme={theme} setTheme={setTheme} />}
+        {tab === "settings"  && <Settings theme={theme} setTheme={setTheme} user={user} onLogout={logout} />}
       </main>
     </div>
   );

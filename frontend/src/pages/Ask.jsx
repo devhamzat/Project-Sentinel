@@ -33,9 +33,9 @@ const MODES = {
 let idSeq = 0;
 const nextId = () => ++idSeq;
 
-function loadHistory() {
+function loadHistory(storageKey) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey);
     if (!raw) return [];
     const msgs = JSON.parse(raw);
     // drop any pending messages left over from a crashed session
@@ -45,12 +45,12 @@ function loadHistory() {
   }
 }
 
-function saveHistory(messages) {
+function saveHistory(storageKey, messages) {
   try {
     // only persist settled messages; cap to avoid blowing up storage
     const settled = messages.filter((m) => m.kind !== "pending");
     localStorage.setItem(
-      STORAGE_KEY,
+      storageKey,
       JSON.stringify(settled.slice(-MAX_STORED))
     );
   } catch {
@@ -196,8 +196,9 @@ function Message({ msg }) {
   );
 }
 
-export default function Ask({ onIngested }) {
-  const [messages, setMessages] = useState(() => loadHistory());
+export default function Ask({ onIngested, userId }) {
+  const storageKey = `${STORAGE_KEY}:${userId}`;
+  const [messages, setMessages] = useState(() => loadHistory(storageKey));
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState("ask");
@@ -216,8 +217,8 @@ export default function Ask({ onIngested }) {
   }, [menuOpen]);
 
   useEffect(() => {
-    saveHistory(messages);
-  }, [messages]);
+    saveHistory(storageKey, messages);
+  }, [messages, storageKey]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -289,7 +290,7 @@ export default function Ask({ onIngested }) {
 
   function clearHistory() {
     setMessages([]);
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(storageKey);
   }
 
   const empty = messages.length === 0;

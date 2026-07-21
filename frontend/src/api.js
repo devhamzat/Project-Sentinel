@@ -12,33 +12,59 @@ async function handle(res) {
     } catch {
       /* non-JSON error body */
     }
-    throw new Error(detail);
+    const error = new Error(detail);
+    error.status = res.status;
+    if (res.status === 401) {
+      window.dispatchEvent(new CustomEvent("sentinel-auth-expired"));
+    }
+    throw error;
   }
+  if (res.status === 204) return null;
   return res.json();
 }
 
+function request(path, options = {}) {
+  return fetch(`${BASE}${path}`, { credentials: "include", ...options }).then(handle);
+}
+
+export function login(email, password) {
+  return request("/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export function logout() {
+  return request("/auth/logout", { method: "POST" });
+}
+
+export function getMe() {
+  return request("/auth/me");
+}
+
 export function getStats() {
-  return fetch(`${BASE}/stats`).then(handle);
+  return request("/stats");
 }
 
 export function ask(question) {
-  return fetch(`${BASE}/ask`, {
+  return request("/ask", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ question }),
-  }).then(handle);
+  });
 }
 
 export function search(query, k = 5) {
-  return fetch(`${BASE}/search`, {
+  return request("/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, k }),
-  }).then(handle);
+  });
 }
 
 export function ingest(file) {
   const form = new FormData();
   form.append("file", file);
-  return fetch(`${BASE}/ingest`, { method: "POST", body: form }).then(handle);
+  return request("/ingest", { method: "POST", body: form });
 }

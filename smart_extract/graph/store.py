@@ -25,6 +25,12 @@ from smart_extract.config import settings
 # Uniqueness constraints make MERGE fast and prevent duplicate entities.
 # arXiv id is unique when present; the other entity keys are their names/terms.
 _CONSTRAINTS = [
+    "CREATE CONSTRAINT auth_user_id IF NOT EXISTS "
+    "FOR (u:AuthUser) REQUIRE u.id IS UNIQUE",
+    "CREATE CONSTRAINT auth_user_email IF NOT EXISTS "
+    "FOR (u:AuthUser) REQUIRE u.email IS UNIQUE",
+    "CREATE CONSTRAINT workspace_id IF NOT EXISTS "
+    "FOR (w:Workspace) REQUIRE w.id IS UNIQUE",
     "CREATE CONSTRAINT paper_arxiv IF NOT EXISTS "
     "FOR (p:Paper) REQUIRE p.arxiv_id IS UNIQUE",
     "CREATE CONSTRAINT author_name IF NOT EXISTS "
@@ -72,9 +78,11 @@ class GraphStore:
         Used by the NL->Cypher query path. The caller is responsible for
         ensuring ``cypher`` is read-only (see query.nl2cypher.is_read_only).
         """
+        def _read(tx: Any) -> list[dict[str, Any]]:
+            return [record.data() for record in tx.run(cypher, **params)]
+
         with self._driver.session() as session:
-            result = session.run(cypher, **params)
-            return [record.data() for record in result]
+            return session.execute_read(_read)
 
     def run_write(self, cypher: str, **params: Any) -> list[dict[str, Any]]:
         """Run a write/DDL query (used by the retrieval spike: index + chunks).
@@ -88,10 +96,33 @@ class GraphStore:
             result = session.run(cypher, **params)
             return [record.data() for record in result]
 
-    def counts(self) -> dict[str, int]:
-        """Return node/relationship counts for the dashboard summary."""
+    def counts(self, owner_id: str | None = None) -> dict[str, int]:
+        """Return graph counts, scoped to an owner's papers when supplied."""
         out: dict[str, int] = {}
         with self._driver.session() as session:
+            if owner_id:
+                paths = {
+                    "Paper": "(w:Workspace {id:$owner_id})-[:OWNS]->(x:Paper)",
+                    "Author": "(w:Workspace {id:$owner_id})-[:OWNS]->(:Paper)-[:AUTHORED_BY]->(x:Author)",
+                    "Affiliation": "(w:Workspace {id:$owner_id})-[:OWNS]->(:Paper)-[:AUTHORED_BY]->(:Author)-[:AFFILIATED_WITH {owner_id:$owner_id}]->(x:Affiliation)",
+                    "Keyword": "(w:Workspace {id:$owner_id})-[:OWNS]->(:Paper)-[:HAS_KEYWORD]->(x:Keyword)",
+                    "Dataset": "(w:Workspace {id:$owner_id})-[:OWNS]->(:Paper)-[:USES]->(x:Dataset)",
+                }
+                for label, path in paths.items():
+                    out[label] = session.run(
+                        f"MATCH {path} RETURN count(DISTINCT x) AS n", owner_id=owner_id
+                    ).single()["n"]
+                rel_paths = {
+                    "AUTHORED_BY": "(w:Workspace {id:$owner_id})-[:OWNS]->(:Paper)-[r:AUTHORED_BY]->(:Author)",
+                    "AFFILIATED_WITH": "(w:Workspace {id:$owner_id})-[:OWNS]->(:Paper)-[:AUTHORED_BY]->(:Author)-[r:AFFILIATED_WITH {owner_id:$owner_id}]->(:Affiliation)",
+                    "HAS_KEYWORD": "(w:Workspace {id:$owner_id})-[:OWNS]->(:Paper)-[r:HAS_KEYWORD]->(:Keyword)",
+                    "USES": "(w:Workspace {id:$owner_id})-[:OWNS]->(:Paper)-[r:USES]->(:Dataset)",
+                }
+                for rel, path in rel_paths.items():
+                    out[rel] = session.run(
+                        f"MATCH {path} RETURN count(DISTINCT r) AS n", owner_id=owner_id
+                    ).single()["n"]
+                return out
             for label in ("Paper", "Author", "Affiliation", "Keyword", "Dataset"):
                 out[label] = session.run(
                     f"MATCH (x:`{label}`) RETURN count(x) AS n"
@@ -102,7 +133,9 @@ class GraphStore:
                 ).single()["n"]
         return out
 
-    def sample_values(self, limit: int = 12) -> dict[str, list[str]]:
+    def sample_values(
+        self, limit: int = 12, owner_id: str | None = None
+    ) -> dict[str, list[str]]:
         """Return a few real values per entity type to ground the NL->Cypher prompt.
 
         Giving the model the actual dataset/author/keyword names that exist helps
@@ -110,26 +143,134 @@ class GraphStore:
         results from name/casing mismatches).
         """
         plan = {
-            "datasets": ("Dataset", "name"),
-            "keywords": ("Keyword", "term"),
-            "authors": ("Author", "name"),
-            "affiliations": ("Affiliation", "name"),
-            "paper_titles": ("Paper", "title"),
+            "datasets": ("[:USES]", "Dataset", "name"),
+            "keywords": ("[:HAS_KEYWORD]", "Keyword", "term"),
+            "authors": ("[:AUTHORED_BY]", "Author", "name"),
+            "affiliations": ("[:AUTHORED_BY]->(:Author)-[:AFFILIATED_WITH {owner_id:$owner_id}]", "Affiliation", "name"),
+            "paper_titles": ("", "Paper", "title"),
         }
         out: dict[str, list[str]] = {}
         with self._driver.session() as session:
-            for key, (label, prop) in plan.items():
-                rows = session.run(
-                    f"MATCH (x:`{label}`) WHERE x.`{prop}` IS NOT NULL "
-                    f"RETURN x.`{prop}` AS v LIMIT $limit",
-                    limit=limit,
-                )
+            for key, (path, label, prop) in plan.items():
+                if owner_id:
+                    if label == "Paper":
+                        match = "(w:Workspace {id:$owner_id})-[:OWNS]->(x:Paper)"
+                    else:
+                        match = (
+                            "(w:Workspace {id:$owner_id})-[:OWNS]->(:Paper)-"
+                            f"{path}->(x:`{label}`)"
+                        )
+                    rows = session.run(
+                        f"MATCH {match} WHERE x.`{prop}` IS NOT NULL "
+                        f"RETURN DISTINCT x.`{prop}` AS v LIMIT $limit",
+                        owner_id=owner_id, limit=limit,
+                    )
+                else:
+                    rows = session.run(
+                        f"MATCH (x:`{label}`) WHERE x.`{prop}` IS NOT NULL "
+                        f"RETURN x.`{prop}` AS v LIMIT $limit", limit=limit,
+                    )
                 out[key] = [r["v"] for r in rows]
         return out
 
+    # --- application users --------------------------------------------------
+
+    def create_user(
+        self, user_id: str, email: str, password_hash: str, role: str
+    ) -> dict[str, Any]:
+        with self._driver.session() as session:
+            row = session.run(
+                """
+                CREATE (u:AuthUser {
+                    id:$id, email:$email, password_hash:$password_hash,
+                    role:$role, active:true, session_version:1,
+                    created_at:datetime()
+                })
+                CREATE (w:Workspace {id:$id, created_at:datetime()})
+                CREATE (u)-[:MEMBER_OF]->(w)
+                RETURN u.id AS id, u.email AS email, u.role AS role,
+                       u.active AS active, u.session_version AS session_version
+                """,
+                id=user_id, email=email, password_hash=password_hash, role=role,
+            ).single()
+            return dict(row)
+
+    def get_user_by_email(self, email: str) -> dict[str, Any] | None:
+        with self._driver.session() as session:
+            row = session.run(
+                "MATCH (u:AuthUser {email:$email}) "
+                "RETURN u.id AS id, u.email AS email, u.password_hash AS password_hash, "
+                "u.role AS role, u.active AS active, "
+                "coalesce(u.session_version, 1) AS session_version",
+                email=email,
+            ).single()
+            return dict(row) if row else None
+
+    def get_user_by_id(self, user_id: str) -> dict[str, Any] | None:
+        with self._driver.session() as session:
+            row = session.run(
+                "MATCH (u:AuthUser {id:$id}) "
+                "RETURN u.id AS id, u.email AS email, u.role AS role, "
+                "u.active AS active, coalesce(u.session_version, 1) AS session_version",
+                id=user_id,
+            ).single()
+            return dict(row) if row else None
+
+    def list_users(self) -> list[dict[str, Any]]:
+        with self._driver.session() as session:
+            rows = session.run(
+                "MATCH (u:AuthUser) RETURN u.id AS id, u.email AS email, "
+                "u.role AS role, u.active AS active ORDER BY u.email"
+            )
+            return [record.data() for record in rows]
+
+    def update_user_password(self, email: str, password_hash: str) -> bool:
+        with self._driver.session() as session:
+            row = session.run(
+                "MATCH (u:AuthUser {email:$email}) "
+                "SET u.password_hash=$password_hash, u.password_changed_at=datetime(), "
+                "u.session_version=coalesce(u.session_version, 1) + 1 "
+                "RETURN count(u) AS n",
+                email=email, password_hash=password_hash,
+            ).single()
+            return bool(row["n"])
+
+    def set_user_active(self, email: str, active: bool) -> bool:
+        with self._driver.session() as session:
+            row = session.run(
+                "MATCH (u:AuthUser {email:$email}) SET u.active=$active, "
+                "u.session_version=coalesce(u.session_version, 1) + 1 "
+                "RETURN count(u) AS n",
+                email=email, active=active,
+            ).single()
+            return bool(row["n"])
+
+    def claim_unowned_papers(self, owner_id: str) -> int:
+        """Assign legacy, currently unowned papers/chunks to one account."""
+        with self._driver.session() as session:
+            row = session.run(
+                """
+                MATCH (w:Workspace {id:$owner_id})
+                MATCH (p:Paper)
+                WHERE NOT (:Workspace)-[:OWNS]->(p)
+                MERGE (w)-[:OWNS]->(p)
+                WITH w, p
+                OPTIONAL MATCH (p)-[:HAS_CHUNK]->(c:Chunk)
+                WHERE c.owner_id IS NULL
+                SET c.owner_id = w.id,
+                    c.paper_key = w.id + ':' + c.paper_key
+                RETURN count(DISTINCT p) AS n
+                """,
+                owner_id=owner_id,
+            ).single()
+            return int(row["n"])
+
     # --- writes --------------------------------------------------------------
 
-    def upsert_paper(self, paper: dict[str, Any], arxiv_id: str | None) -> str:
+    def upsert_paper(
+        self, paper: dict[str, Any], arxiv_id: str | None,
+        owner_id: str | None = None,
+    ) -> str:
         """MERGE a Paper and all its entities/relations. Return the paper title.
 
         Writes the full §6 model: Paper + Author (AUTHORED_BY) + Affiliation
@@ -145,7 +286,8 @@ class GraphStore:
 
         with self._driver.session() as session:
             session.execute_write(
-                self._write_paper, arxiv_id, title, paper, authors, first_author
+                self._write_paper, arxiv_id, title, paper, authors, first_author,
+                owner_id,
             )
         return title
 
@@ -157,6 +299,7 @@ class GraphStore:
         paper: dict[str, Any],
         authors: list[str],
         first_author: str | None,
+        owner_id: str | None,
     ) -> None:
         # 1) MERGE the Paper on the best available key, then capture its
         #    internal element id so author edges attach to that exact node
@@ -197,6 +340,15 @@ class GraphStore:
             ).single()
 
         eid = record["eid"]
+        if owner_id:
+            tx.run(
+                """
+                MATCH (w:Workspace {id:$owner_id})
+                MATCH (p:Paper) WHERE elementId(p) = $eid
+                MERGE (w)-[:OWNS]->(p)
+                """,
+                owner_id=owner_id, eid=eid,
+            )
         affiliations = paper.get("affiliations") or []
         keywords = paper.get("keywords") or []
         datasets = paper.get("datasets") or []
@@ -220,14 +372,24 @@ class GraphStore:
         #    not a silent guess. Refining the mapping is future work.
         for affiliation in affiliations:
             for name in authors:
-                tx.run(
-                    """
-                    MATCH (a:Author {name: $name})
-                    MERGE (x:Affiliation {name: $affiliation})
-                    MERGE (a)-[:AFFILIATED_WITH]->(x)
-                    """,
-                    name=name, affiliation=affiliation,
-                )
+                if owner_id:
+                    tx.run(
+                        """
+                        MATCH (a:Author {name: $name})
+                        MERGE (x:Affiliation {name: $affiliation})
+                        MERGE (a)-[:AFFILIATED_WITH {owner_id:$owner_id}]->(x)
+                        """,
+                        name=name, affiliation=affiliation, owner_id=owner_id,
+                    )
+                else:
+                    tx.run(
+                        """
+                        MATCH (a:Author {name: $name})
+                        MERGE (x:Affiliation {name: $affiliation})
+                        MERGE (a)-[:AFFILIATED_WITH]->(x)
+                        """,
+                        name=name, affiliation=affiliation,
+                    )
 
         # 4) Keywords: (:Paper)-[:HAS_KEYWORD]->(:Keyword).
         for term in keywords:

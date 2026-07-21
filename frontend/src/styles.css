@@ -1433,3 +1433,79 @@ code, pre, .mono {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 99px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--soft); }
+
+/* --- Authentication ------------------------------------------------------ */
+
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.25rem;
+  background-color: var(--bg);
+  color: var(--ink);
+}
+
+.auth-card {
+  width: min(100%, 390px);
+  padding: 2rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.auth-brand { margin-bottom: 2rem; }
+
+.auth-heading h1 {
+  margin: 0 0 0.4rem;
+  font-family: var(--font-display);
+  font-size: 1.55rem;
+}
+
+.auth-heading p {
+  margin: 0 0 1.4rem;
+  color: var(--soft);
+  font-size: 0.84rem;
+}
+
+.auth-form { display: grid; gap: 1rem; }
+
+.auth-form label {
+  display: grid;
+  gap: 0.4rem;
+  color: var(--ink2);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.auth-form input {
+  width: 100%;
+  border: 1px solid var(--line2);
+  border-radius: var(--radius);
+  padding: 0.72rem 0.8rem;
+  background: var(--surface2);
+  color: var(--ink);
+  font: inherit;
+}
+
+.auth-form input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.auth-error {
+  color: var(--error);
+  font-size: 0.8rem;
+}
+
+.auth-submit { width: 100%; justify-content: center; margin-top: 0.25rem; }
+
+.sidebar-user {
+  display: block;
+  max-width: 100%;
+  margin-bottom: 0.5rem;
+  overflow: hidden;
+  color: var(--ink2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

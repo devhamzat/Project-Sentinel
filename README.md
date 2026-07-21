@@ -37,14 +37,28 @@ python -m smart_extract.scripts.make_photos      # make photographed copies (OCR
 pytest -q                                        # smoke + lane tests
 ```
 
-## Ingesting & querying (CLI)
+## Remote CLI
+
+The CLI is an HTTPS client. It does not need Neo4j, LLM, OCR, or server
+credentials on the user's computer. For a Cloudflare-protected deployment,
+install `cloudflared` and sign in once:
 
 ```bash
-sentinel ingest data/raw/2606.18246v1.pdf       # digital lane (PDF text layer)
-sentinel ingest data/photo/2606.18246v1_p1.png  # photo lane (OpenCV + Tesseract OCR)
-sentinel ask "Which papers use the SQuAD dataset?"   # NL -> Cypher -> answer
-sentinel stats                                  # node/relationship counts
+sentinel login you@example.com --api-url https://sentinel.example.com/api
+sentinel ingest data/raw/2606.18246v1.pdf
+sentinel ingest data/photo/2606.18246v1_p1.png
+sentinel ask "Which papers use the SQuAD dataset?"
+sentinel search "transformer evaluation" -k 5
+sentinel stats
+sentinel whoami
+sentinel logout
 ```
+
+For non-local URLs, `sentinel login` automatically opens the browser for
+Cloudflare Access and then prompts for the Sentinel password. Both expiring
+tokens and the API URL are stored in the operating-system credential manager;
+neither password is stored. Use `--no-cloudflare` only when the API is not
+behind Access. Local development defaults to `http://127.0.0.1:8000`.
 
 ## Web app (REST API + React dashboard)
 
@@ -56,9 +70,58 @@ uvicorn smart_extract.api.main:app --reload --port 8000   # docs at /docs
 cd frontend && npm install && npm run dev                 # http://localhost:5173
 ```
 
-The dashboard proxies `/api/*` to the FastAPI backend. The React app holds no
-business logic — the CLI, API, and dashboard all call the same Python service
-layer (`smart_extract/service.py`).
+The dashboard proxies `/api/*` to the FastAPI backend. The React app and remote
+CLI hold no business logic: both call FastAPI, which is the only public door to
+the Python service layer (`smart_extract/service.py`).
+
+## Authentication and test accounts
+
+The web API is private by default. Accounts are invite-only and stored in
+Neo4j; there is no public registration route. Before deployment, set a random
+`AUTH_SECRET`, the exact `CORS_ALLOWED_ORIGINS`, and `AUTH_COOKIE_SECURE=true`
+in the deployment environment.
+
+Create the first administrator once from a trusted shell on the API host:
+
+```bash
+python -m smart_extract.scripts.bootstrap_admin you@example.com
+```
+
+Then all account management is remote and admin-only:
+
+```bash
+sentinel login you@example.com --api-url https://sentinel.example.com/api
+sentinel users add supervisor@example.com --role tester
+sentinel users list
+sentinel users reset-password supervisor@example.com
+sentinel users disable supervisor@example.com
+```
+
+Existing papers created before authentication have no owner. Assign them once:
+
+```bash
+sentinel users claim you@example.com
+```
+
+There is intentionally no remote first-admin bootstrap endpoint. Password
+resets and account disabling invalidate Sentinel sessions immediately.
+Account-management routes verify the admin role again on the server; the CLI's
+local role check is only an early UX hint.
+
+Browser sessions use a signed token in an HttpOnly, SameSite cookie. Every API
+route except `/health`, `/auth/login`, and `/auth/token` requires a valid
+session. `/auth/token` is the CLI bearer-token exchange and is expected to sit
+behind Cloudflare Access in production. Dashboard counts, graph questions,
+semantic search, ingestion ownership, and browser chat history are scoped to
+the signed-in account.
+
+## Cloudflare deployment boundary
+
+Create a Cloudflare Access application for the Sentinel hostname, allow only
+the exact tester emails, and map a Cloudflare Tunnel route to the reverse proxy
+serving React plus FastAPI. The CLI sends Cloudflare's token in
+`cf-access-token` and Sentinel's workspace token as `Authorization: Bearer ...`.
+Neo4j remains private and is never contacted by the CLI.
 
 ## Evaluation (Chapter 4 numbers)
 

@@ -286,7 +286,13 @@ def ensure_vector_index(store: GraphStore, dimensions: int) -> None:
     )
 
 
-def index_paper(store: GraphStore, arxiv_id: str | None, title: str, text: str) -> int:
+def index_paper(
+    store: GraphStore,
+    arxiv_id: str | None,
+    title: str,
+    text: str,
+    owner_id: str | None = None,
+) -> int:
     """Chunk, embed, and store a paper's passages. Returns the chunk count.
 
     Idempotent: chunks MERGE on (paper_key, chunk_index) where ``paper_key`` is
@@ -294,9 +300,10 @@ def index_paper(store: GraphStore, arxiv_id: str | None, title: str, text: str) 
     re-indexing replaces rather than duplicates. Creates the vector index on
     first call, sized to the dimension the embedding model actually returned.
     """
-    paper_key = arxiv_id or title
-    if not paper_key:
+    identity = arxiv_id or title
+    if not identity:
         return 0
+    paper_key = f"{owner_id}:{identity}" if owner_id else identity
     chunks = [c for c in chunk_text(text) if not looks_like_references(c)]
     if not chunks:
         return 0
@@ -313,12 +320,17 @@ def index_paper(store: GraphStore, arxiv_id: str | None, title: str, text: str) 
         WHERE ($arxiv_id IS NOT NULL AND p.arxiv_id = $arxiv_id)
            OR ($arxiv_id IS NULL AND p.title = $title)
         WITH p LIMIT 1
+        OPTIONAL MATCH (w:Workspace {id:$owner_id})-[:OWNS]->(p)
+        WITH p, w
+        WHERE $owner_id IS NULL OR w IS NOT NULL
         UNWIND $rows AS row
         MERGE (c:Chunk {paper_key: $paper_key, chunk_index: row.i})
-        SET c.text = row.text, c.embedding = row.embedding
+        SET c.text = row.text, c.embedding = row.embedding,
+            c.owner_id = $owner_id
         MERGE (p)-[:HAS_CHUNK]->(c)
         """,
         arxiv_id=arxiv_id, title=title, paper_key=paper_key, rows=rows,
+        owner_id=owner_id,
     )
     # A re-index that produced fewer chunks must not leave stale tails behind.
     store.run_write(
@@ -329,7 +341,12 @@ def index_paper(store: GraphStore, arxiv_id: str | None, title: str, text: str) 
     return len(rows)
 
 
-def retrieve(query: str, k: int = 5, store: GraphStore | None = None) -> RetrievalResult:
+def retrieve(
+    query: str,
+    k: int = 5,
+    store: GraphStore | None = None,
+    owner_id: str | None = None,
+) -> RetrievalResult:
     """Find the k passages most semantically similar to ``query``.
 
     Embeds the query, runs Neo4j's native vector search over (:Chunk), and
@@ -340,17 +357,34 @@ def retrieve(query: str, k: int = 5, store: GraphStore | None = None) -> Retriev
     def _run(s: GraphStore) -> RetrievalResult:
         query_vec = embed([query])[0]
         try:
-            rows = s.run_read(
-                f"""
-                CALL db.index.vector.queryNodes('{CHUNK_INDEX}', $k, $vec)
-                YIELD node AS c, score
-                MATCH (p:Paper)-[:HAS_CHUNK]->(c)
-                RETURN p.arxiv_id AS arxiv_id, p.title AS title,
-                       c.text AS text, c.chunk_index AS chunk_index, score
-                ORDER BY score DESC
-                """,
-                k=k, vec=query_vec,
-            )
+            if owner_id:
+                # The vector index is global, so over-fetch candidates and then
+                # discard every chunk outside the authenticated workspace.
+                rows = s.run_read(
+                    f"""
+                    CALL db.index.vector.queryNodes('{CHUNK_INDEX}', $candidate_k, $vec)
+                    YIELD node AS c, score
+                    MATCH (w:Workspace {{id:$owner_id}})-[:OWNS]->(p:Paper)-[:HAS_CHUNK]->(c)
+                    WHERE c.owner_id = $owner_id
+                    RETURN p.arxiv_id AS arxiv_id, p.title AS title,
+                           c.text AS text, c.chunk_index AS chunk_index, score
+                    ORDER BY score DESC LIMIT $k
+                    """,
+                    candidate_k=max(100, k * 20), k=k, vec=query_vec,
+                    owner_id=owner_id,
+                )
+            else:
+                rows = s.run_read(
+                    f"""
+                    CALL db.index.vector.queryNodes('{CHUNK_INDEX}', $k, $vec)
+                    YIELD node AS c, score
+                    MATCH (p:Paper)-[:HAS_CHUNK]->(c)
+                    RETURN p.arxiv_id AS arxiv_id, p.title AS title,
+                           c.text AS text, c.chunk_index AS chunk_index, score
+                    ORDER BY score DESC
+                    """,
+                    k=k, vec=query_vec,
+                )
         except Exception as exc:  # noqa: BLE001 - map "no index" to a clear message
             if "index" in str(exc).lower():
                 raise RetrievalError(
@@ -407,13 +441,18 @@ def phrase_grounded_answer(query: str, chunks: list[Chunk]) -> str:
         return ""
 
 
-def search(query: str, k: int = 5, store: GraphStore | None = None) -> RetrievalResult:
+def search(
+    query: str,
+    k: int = 5,
+    store: GraphStore | None = None,
+    owner_id: str | None = None,
+) -> RetrievalResult:
     """Semantic search plus a grounded, cited answer — the query-path twin of ask().
 
     Pipeline: embed the question -> vector-rank chunks -> phrase an answer from
     those chunks only. The chunks (with scores and owning papers) are always
     returned so every answer is attributable.
     """
-    result = retrieve(query, k=k, store=store)
+    result = retrieve(query, k=k, store=store, owner_id=owner_id)
     result.answer = phrase_grounded_answer(query, result.chunks)
     return result

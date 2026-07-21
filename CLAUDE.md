@@ -55,10 +55,10 @@ only). Do not expand scope to chase generality — finishability matters.
 - **Development model:** iterative / incremental. Build a thin end-to-end thread
   first on the easy path, then deepen. Work phase by phase (see §10).
 - **Storage:** Neo4j (graph database), queried in Cypher. Not relational/SQL.
-- **Interfaces:** one Python application backend (FastAPI), exposed through three
-  thin doors — a web dashboard, a REST API, and a CLI. The REST API and CLI are
-  Python and call the same backend logic. Do NOT introduce a second language for
-  the CLI or backend logic.
+- **Interfaces:** one Python application backend (FastAPI), exposed through a
+  web dashboard, REST API, and Python remote CLI. The dashboard and CLI are thin
+  HTTP clients; FastAPI alone calls the shared backend service logic. Do NOT
+  introduce a second language for the CLI or backend logic.
   - **DEVIATION (Phase 4, developer-approved 2026-06-18):** the *web dashboard*
     is built as a separate **React** frontend instead of server-rendered Python.
     This consciously overrides the original "all three doors are Python" rule for
@@ -112,6 +112,21 @@ Relationships:
 
 Use `MERGE` (not `CREATE`) when writing nodes/edges so re-ingesting a paper does
 not duplicate entities. Match papers by a stable id (arXiv id) where possible.
+
+- **EXTENSION (developer-approved 2026-07-16): semantic content retrieval.**
+  Ingestion also stores each paper's body as
+  `(:Paper)-[:HAS_CHUNK]->(:Chunk {paper_key, chunk_index, text, embedding})`
+  under a Neo4j native vector index (5.11+), embedded via a second seam in
+  `llm.py` (`embed()`, configured by `LLM_EMBED_*` in `.env`, falling back to
+  the chat seam). `query/retrieve.py` provides `search()` — passages ranked by
+  meaning plus a grounded, cited answer — complementing (not replacing)
+  NL→Cypher: structured questions → `ask()`, conceptual/content questions →
+  `search()`. Exposed as `sentinel search`, `POST /search`, and the dashboard
+  Search page. Chunk indexing at ingest is best-effort: if embeddings are not
+  configured, the graph write still succeeds and the result reports
+  `chunks_error`. Rationale and full design: `docs/design-retrieve.md`. The
+  §6 core model above is unchanged; Chunk is infrastructure, not a knowledge
+  entity.
 
 ## 7. Tech stack
 

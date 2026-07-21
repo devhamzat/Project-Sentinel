@@ -1,31 +1,46 @@
 """FastAPI backend — the REST door onto the shared backend service (§4).
 
-Endpoints (all call smart_extract.service, same logic as the CLI):
+Data endpoints call smart_extract.service; the remote CLI calls these endpoints:
   GET  /health            -> liveness
   GET  /stats             -> node/relationship counts
   POST /ask    {question} -> NL -> Cypher, runs it, returns cypher + rows
   POST /search {query, k} -> semantic search: ranked passages + grounded answer
   POST /ingest (upload)   -> ingest an uploaded PDF/image into the graph
 
-CORS is open for local development so the separate React dashboard can call it.
+CORS uses an explicit allowlist so the separate React dashboard can call it.
 Run: uvicorn smart_extract.api.main:app --reload
 """
 
 from __future__ import annotations
 
-import shutil
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from smart_extract import service
+from smart_extract.auth import (
+    AuthError,
+    AuthConfigurationError,
+    InvalidCredentials,
+    User,
+    authenticate,
+    create_user,
+    hash_password,
+    issue_session,
+    normalise_email,
+    session_expires_at,
+    user_from_session,
+)
+from smart_extract.config import settings
 from smart_extract.extraction.llm import LLMError
 from smart_extract.intake import IntakeError
 from smart_extract.query.nl2cypher import QueryError
 from smart_extract.query.retrieve import RetrievalError
+from smart_extract.graph.store import open_store
 
 app = FastAPI(
     title="Smart Data Extraction API",
@@ -33,10 +48,11 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Local-dev CORS: the React dashboard runs on a different port.
+# Explicit origins are required because authenticated requests carry cookies.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -72,26 +88,214 @@ class SearchResponse(BaseModel):
     chunks: list[ChunkHit]
 
 
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: str
+    email: str
+    role: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: str
+    user: UserResponse
+
+
+class CreateUserRequest(BaseModel):
+    email: str
+    password: str
+    role: str = "tester"
+
+
+class AdminUserResponse(UserResponse):
+    active: bool
+
+
+class PasswordRequest(BaseModel):
+    password: str
+
+
+class UserActiveRequest(BaseModel):
+    active: bool
+
+
+def require_user(request: Request) -> User:
+    """Resolve an HttpOnly session cookie (or Bearer token for API clients)."""
+    token = request.cookies.get(settings.auth_cookie_name)
+    authorization = request.headers.get("authorization", "")
+    if not token and authorization.lower().startswith("bearer "):
+        token = authorization[7:].strip()
+    if not token:
+        raise HTTPException(
+            status_code=401, detail="Authentication required.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        return user_from_session(token)
+    except (InvalidCredentials, AuthConfigurationError) as exc:
+        raise HTTPException(
+            status_code=401, detail=str(exc),
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+
+def require_admin(user: User = Depends(require_user)) -> User:
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Administrator access required.")
+    return user
+
+
+@app.post("/auth/login", response_model=UserResponse)
+def login(req: LoginRequest, response: Response) -> UserResponse:
+    try:
+        user = authenticate(req.email, req.password)
+        token = issue_session(user)
+    except InvalidCredentials as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except AuthConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    max_age = settings.auth_token_ttl_minutes * 60
+    response.set_cookie(
+        key=settings.auth_cookie_name,
+        value=token,
+        max_age=max_age,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+    return UserResponse(id=user.id, email=user.email, role=user.role)
+
+
+@app.post("/auth/token", response_model=TokenResponse)
+def token_login(req: LoginRequest) -> TokenResponse:
+    """Issue a bearer token for non-browser clients such as the remote CLI."""
+    try:
+        user = authenticate(req.email, req.password)
+        token = issue_session(user)
+    except InvalidCredentials as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except AuthConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return TokenResponse(
+        access_token=token,
+        expires_at=session_expires_at(token).isoformat(),
+        user=UserResponse(id=user.id, email=user.email, role=user.role),
+    )
+
+
+@app.post("/auth/logout", status_code=204)
+def logout(response: Response) -> None:
+    response.delete_cookie(
+        settings.auth_cookie_name,
+        path="/",
+        secure=settings.auth_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+
+
+@app.get("/auth/me", response_model=UserResponse)
+def me(user: User = Depends(require_user)) -> UserResponse:
+    return UserResponse(id=user.id, email=user.email, role=user.role)
+
+
+@app.get("/admin/users", response_model=list[AdminUserResponse])
+def list_users(_admin: User = Depends(require_admin)) -> list[AdminUserResponse]:
+    with open_store() as store:
+        rows = store.list_users()
+    return [AdminUserResponse(**row) for row in rows]
+
+
+@app.post("/admin/users", response_model=UserResponse, status_code=201)
+def add_user(
+    req: CreateUserRequest, _admin: User = Depends(require_admin)
+) -> UserResponse:
+    try:
+        user = create_user(req.email, req.password, req.role)
+    except AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return UserResponse(id=user.id, email=user.email, role=user.role)
+
+
+@app.post("/admin/users/{email}/claim")
+def claim_user_papers(
+    email: str, _admin: User = Depends(require_admin)
+) -> dict[str, int]:
+    try:
+        email = normalise_email(email)
+    except AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with open_store() as store:
+        row = store.get_user_by_email(email)
+        if not row:
+            raise HTTPException(status_code=404, detail=f"No account exists for {email}.")
+        claimed = store.claim_unowned_papers(str(row["id"]))
+    return {"claimed": claimed}
+
+
+@app.put("/admin/users/{email}/password")
+def reset_user_password(
+    email: str,
+    req: PasswordRequest,
+    _admin: User = Depends(require_admin),
+) -> dict[str, str]:
+    try:
+        email = normalise_email(email)
+        password_hash = hash_password(req.password)
+    except AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with open_store() as store:
+        changed = store.update_user_password(email, password_hash)
+    if not changed:
+        raise HTTPException(status_code=404, detail=f"No account exists for {email}.")
+    return {"email": email}
+
+
+@app.patch("/admin/users/{email}")
+def set_user_active(
+    email: str,
+    req: UserActiveRequest,
+    admin: User = Depends(require_admin),
+) -> dict[str, object]:
+    try:
+        email = normalise_email(email)
+    except AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if email == admin.email and not req.active:
+        raise HTTPException(status_code=400, detail="You cannot disable your own account.")
+    with open_store() as store:
+        changed = store.set_user_active(email, req.active)
+    if not changed:
+        raise HTTPException(status_code=404, detail=f"No account exists for {email}.")
+    return {"email": email, "active": req.active}
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @app.get("/stats")
-def stats() -> dict[str, int]:
+def stats(user: User = Depends(require_user)) -> dict[str, int]:
     try:
-        return service.graph_summary()
+        return service.graph_summary(owner_id=user.id)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=f"Graph unavailable: {exc}")
 
 
 @app.post("/ask", response_model=AskResponse)
-def ask(req: AskRequest) -> AskResponse:
+def ask(req: AskRequest, user: User = Depends(require_user)) -> AskResponse:
     question = req.question.strip()
     if not question:
         raise HTTPException(status_code=400, detail="Question must not be empty.")
     try:
-        result = service.answer_question(question)
+        result = service.answer_question(question, owner_id=user.id)
     except QueryError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:  # noqa: BLE001
@@ -105,12 +309,16 @@ def ask(req: AskRequest) -> AskResponse:
 
 
 @app.post("/search", response_model=SearchResponse)
-def search(req: SearchRequest) -> SearchResponse:
+def search(
+    req: SearchRequest, user: User = Depends(require_user)
+) -> SearchResponse:
     query = req.query.strip()
     if not query:
         raise HTTPException(status_code=400, detail="Query must not be empty.")
     try:
-        result = service.search_content(query, k=max(1, min(req.k, 20)))
+        result = service.search_content(
+            query, k=max(1, min(req.k, 20)), owner_id=user.id
+        )
     except RetrievalError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except LLMError as exc:
@@ -134,23 +342,42 @@ def search(req: SearchRequest) -> SearchResponse:
 
 
 @app.post("/ingest")
-async def ingest(file: UploadFile = File(...)) -> dict:
+async def ingest(
+    file: UploadFile = File(...), user: User = Depends(require_user)
+) -> dict:
     """Ingest an uploaded paper (PDF or image) into the graph."""
     suffix = Path(file.filename or "upload").suffix or ".pdf"
     tmp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            shutil.copyfileobj(file.file, tmp)
             tmp_path = Path(tmp.name)
-        return service.ingest_paper(tmp_path)
+            total = 0
+            limit = settings.max_upload_mb * 1024 * 1024
+            while chunk := await file.read(1024 * 1024):
+                total += len(chunk)
+                if total > limit:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File exceeds the {settings.max_upload_mb} MB upload limit.",
+                    )
+                tmp.write(chunk)
+        return await run_in_threadpool(
+            service.ingest_paper,
+            tmp_path,
+            user.id,
+            file.filename,
+        )
     except IntakeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except LLMError as exc:
         raise HTTPException(status_code=502, detail=f"LLM error: {exc}")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc))
     finally:
+        await file.close()
         if tmp_path and tmp_path.exists():
             tmp_path.unlink()

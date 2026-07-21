@@ -21,7 +21,7 @@ function ThemePreview({ theme }) {
   );
 }
 
-function Appearance({ theme, setTheme }) {
+function Appearance({ theme, setTheme, user, onLogout }) {
   return (
     <>
       <div className="settings-section">
@@ -38,6 +38,25 @@ function Appearance({ theme, setTheme }) {
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="divider" />
+
+      <div className="settings-section">
+        <div className="settings-title">Account</div>
+        <div className="kv-list">
+          <div className="kv-row">
+            <span className="kv-key">Signed in as</span>
+            <span className="kv-key-mono">{user.email}</span>
+          </div>
+          <div className="kv-row">
+            <span className="kv-key">Role</span>
+            <span className="badge">{user.role}</span>
+          </div>
+        </div>
+        <button className="btn btn-ghost" onClick={onLogout} style={{ marginTop: "0.8rem" }}>
+          Sign out
+        </button>
       </div>
 
       <div className="divider" />
@@ -68,7 +87,7 @@ const SETTING_TABS = [
   { id: "docs",       label: "Docs"       },
 ];
 
-export default function Settings({ theme, setTheme }) {
+export default function Settings({ theme, setTheme, user, onLogout }) {
   const [activeTab, setActiveTab] = useState("appearance");
 
   return (
@@ -90,7 +109,9 @@ export default function Settings({ theme, setTheme }) {
       </div>
 
       <div className="settings-tab-body">
-        {activeTab === "appearance" && <Appearance theme={theme} setTheme={setTheme} />}
+        {activeTab === "appearance" && (
+          <Appearance theme={theme} setTheme={setTheme} user={user} onLogout={onLogout} />
+        )}
         {activeTab === "docs"       && <Docs />}
       </div>
     </div>

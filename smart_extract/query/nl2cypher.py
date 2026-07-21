@@ -24,23 +24,38 @@ from smart_extract.graph.store import GraphStore, open_store
 # Clauses that mutate or administer the graph. A generated query containing any
 # of these (as a whole word) is refused — the NL query path is read-only.
 _FORBIDDEN = re.compile(
-    r"\b(CREATE|MERGE|DELETE|DETACH|SET|REMOVE|DROP|LOAD\s+CSV|CALL\s+db\.|"
-    r"CALL\s+apoc\.\w+\.(?:create|delete|remove)|FOREACH)\b",
+    r"\b(CREATE|MERGE|DELETE|DETACH|SET|REMOVE|DROP|LOAD\s+CSV|CALL|SHOW|"
+    r"UNION|USE|FOREACH)\b|;",
     re.IGNORECASE,
 )
+
+_SCOPED_PREFIX = re.compile(
+    r"^\s*MATCH\s*\(\s*w\s*:\s*Workspace\s*\{\s*id\s*:\s*\$user_id\s*\}\s*\)"
+    r"\s*-\s*\[\s*:\s*OWNS\s*\]\s*->\s*\(\s*p\s*:\s*Paper\s*\)",
+    re.IGNORECASE,
+)
+_ALLOWED_SCOPED_TAILS = {
+    "",
+    "-[:AUTHORED_BY]->(a:Author)",
+    "-[:AUTHORED_BY]->(a:Author)-[:AFFILIATED_WITH{owner_id:$user_id}]->(x:Affiliation)",
+    "-[:HAS_KEYWORD]->(k:Keyword)",
+    "-[:USES]->(d:Dataset)",
+}
 
 # The schema we expose to the model, mirroring CLAUDE.md §6.
 SCHEMA_DESCRIPTION = """\
 Graph schema (Neo4j):
 Nodes:
+  (:Workspace {id})
   (:Paper {arxiv_id, title, year, summary})
   (:Author {name})
   (:Affiliation {name})
   (:Keyword {term})
   (:Dataset {name})
 Relationships:
+  (:Workspace)-[:OWNS]->(:Paper)
   (:Paper)-[:AUTHORED_BY]->(:Author)
-  (:Author)-[:AFFILIATED_WITH]->(:Affiliation)
+  (:Author)-[:AFFILIATED_WITH {owner_id}]->(:Affiliation)
   (:Paper)-[:HAS_KEYWORD]->(:Keyword)
   (:Paper)-[:USES]->(:Dataset)
 """
@@ -49,28 +64,35 @@ _FEW_SHOT = """\
 Examples (note: always match strings with WHERE ... CONTAINS, never with an
 inline {property: "..."} map, since stored values may differ in length/case):
 Q: Which papers use the SQuAD dataset?
-Cypher: MATCH (p:Paper)-[:USES]->(d:Dataset) WHERE toLower(d.name) CONTAINS 'squad' RETURN p.title AS paper
+Cypher: MATCH (w:Workspace {id: $user_id})-[:OWNS]->(p:Paper)-[:USES]->(d:Dataset) WHERE toLower(d.name) CONTAINS 'squad' RETURN p.title AS paper
 
 Q: Who wrote "Variable-Width Transformers"?
-Cypher: MATCH (p:Paper)-[:AUTHORED_BY]->(a:Author) WHERE toLower(p.title) CONTAINS 'variable-width transformers' RETURN a.name AS author
+Cypher: MATCH (w:Workspace {id: $user_id})-[:OWNS]->(p:Paper)-[:AUTHORED_BY]->(a:Author) WHERE toLower(p.title) CONTAINS 'variable-width transformers' RETURN a.name AS author
 
 Q: Which datasets does the ReproRepo paper use?
-Cypher: MATCH (p:Paper)-[:USES]->(d:Dataset) WHERE toLower(p.title) CONTAINS 'reprorepo' RETURN d.name AS dataset
+Cypher: MATCH (w:Workspace {id: $user_id})-[:OWNS]->(p:Paper)-[:USES]->(d:Dataset) WHERE toLower(p.title) CONTAINS 'reprorepo' RETURN d.name AS dataset
 
 Q: What datasets are used most often?
-Cypher: MATCH (:Paper)-[:USES]->(d:Dataset) RETURN d.name AS dataset, count(*) AS uses ORDER BY uses DESC
+Cypher: MATCH (w:Workspace {id: $user_id})-[:OWNS]->(p:Paper)-[:USES]->(d:Dataset) RETURN d.name AS dataset, count(p) AS uses ORDER BY uses DESC
 
 Q: Which author has the most papers?
-Cypher: MATCH (p:Paper)-[:AUTHORED_BY]->(a:Author) RETURN a.name AS author, count(p) AS papers ORDER BY papers DESC LIMIT 1
+Cypher: MATCH (w:Workspace {id: $user_id})-[:OWNS]->(p:Paper)-[:AUTHORED_BY]->(a:Author) RETURN a.name AS author, count(p) AS papers ORDER BY papers DESC LIMIT 1
 
 Q: List all papers and their publication year.
-Cypher: MATCH (p:Paper) RETURN p.title AS paper, p.year AS year ORDER BY year
+Cypher: MATCH (w:Workspace {id: $user_id})-[:OWNS]->(p:Paper) RETURN p.title AS paper, p.year AS year ORDER BY year
+
+Q: Which affiliations are represented in my papers?
+Cypher: MATCH (w:Workspace {id: $user_id})-[:OWNS]->(p:Paper)-[:AUTHORED_BY]->(a:Author)-[:AFFILIATED_WITH {owner_id: $user_id}]->(x:Affiliation) RETURN DISTINCT x.name AS affiliation
 """
 
 _SYSTEM = (
     "You translate natural-language questions into a single read-only Cypher "
     "query for the given graph schema. Output ONLY the Cypher query, no prose, "
     "no markdown fences, no explanation. Never write, update, or delete data. "
+    "Every query MUST begin exactly with "
+    "MATCH (w:Workspace {id: $user_id})-[:OWNS]->(p:Paper). "
+    "Use exactly one MATCH clause and only extend that connected path using the "
+    "schema relationships; never use CALL, UNION, WITH, UNWIND, or subqueries. "
     "For matching titles, author names, dataset names, etc., ALWAYS use a "
     "case-insensitive partial match (toLower(x) CONTAINS toLower('...')), never "
     "exact string equality, because stored values may be longer or differently "
@@ -79,6 +101,21 @@ _SYSTEM = (
     "MUST also appear in the RETURN clause with an alias; never ORDER BY "
     "count(*) unless count(*) is also returned. Prefer counting with "
     "count(node) grouped by the RETURN keys rather than self-joins."
+)
+
+# Trusted local CLI calls predate web workspaces. Keep them functional without
+# weakening the authenticated API path, which always requests owner scoping.
+_OWNER_PREFIX_TEXT = "MATCH (w:Workspace {id: $user_id})-[:OWNS]->(p:Paper)"
+_SCOPE_RULES = (
+    "Every query MUST begin exactly with "
+    "MATCH (w:Workspace {id: $user_id})-[:OWNS]->(p:Paper). "
+    "Use exactly one MATCH clause and only extend that connected path using the "
+    "schema relationships; never use CALL, UNION, WITH, UNWIND, or subqueries. "
+)
+_UNSCOPED_SYSTEM = _SYSTEM.replace(_SCOPE_RULES, "")
+_UNSCOPED_FEW_SHOT = (
+    _FEW_SHOT.replace(_OWNER_PREFIX_TEXT, "MATCH (p:Paper)")
+    .replace(" {owner_id: $user_id}", "")
 )
 
 
@@ -109,6 +146,28 @@ def is_read_only(cypher: str) -> bool:
     return _FORBIDDEN.search(cypher) is None
 
 
+def is_owner_scoped(cypher: str) -> bool:
+    """True only for the small, connected query shape allowed to web users."""
+    if not is_read_only(cypher) or len(re.findall(r"\bMATCH\b", cypher, re.I)) != 1:
+        return False
+    prefix = _SCOPED_PREFIX.match(cypher)
+    if not prefix:
+        return False
+    remainder = cypher[prefix.end():]
+    if len(re.findall(r"\bWorkspace\b", cypher, re.I)) != 1:
+        return False
+    if len(re.findall(r"\bOWNS\b", cypher, re.I)) != 1:
+        return False
+    clause = re.search(r"\b(?:WHERE|RETURN)\b", cypher[prefix.end():], re.I)
+    if not clause:
+        return False
+    if any(char in remainder[clause.start():] for char in "[]{}"):
+        return False
+    tail = cypher[prefix.end():prefix.end() + clause.start()]
+    compact_tail = re.sub(r"\s+", "", tail)
+    return compact_tail in _ALLOWED_SCOPED_TAILS
+
+
 def _clean_cypher(raw: str) -> str:
     """Strip markdown fences / stray prose the model may wrap around the query."""
     text = raw.strip()
@@ -121,7 +180,7 @@ def _clean_cypher(raw: str) -> str:
     return text.strip()
 
 
-def _finalise(raw: str) -> str:
+def _finalise(raw: str, *, require_owner_scope: bool = False) -> str:
     """Clean LLM output and enforce the read-only guard. Raises QueryError."""
     cypher = _clean_cypher(raw)
     if not cypher:
@@ -130,6 +189,11 @@ def _finalise(raw: str) -> str:
         raise QueryError(
             "Refused to run a non-read-only query generated by the model:\n"
             f"{cypher}"
+        )
+    if require_owner_scope and not is_owner_scoped(cypher):
+        raise QueryError(
+            "Refused to run a query that is not confined to the signed-in "
+            "user's papers."
         )
     return cypher
 
@@ -146,24 +210,38 @@ def _sample_block(samples: dict[str, list[str]] | None) -> str:
     return "\n".join(lines) + "\n" if len(lines) > 1 else ""
 
 
-def to_cypher(question: str, samples: dict[str, list[str]] | None = None) -> str:
+def to_cypher(
+    question: str,
+    samples: dict[str, list[str]] | None = None,
+    *,
+    require_owner_scope: bool = False,
+) -> str:
     """Translate a question to Cypher via the LLM seam (no execution).
 
     ``samples`` are real values from the graph; including them helps the model
     map vague wording to entities that actually exist.
     """
     prompt = (
-        f"{SCHEMA_DESCRIPTION}\n{_sample_block(samples)}{_FEW_SHOT}\n"
+        f"{SCHEMA_DESCRIPTION}\n{_sample_block(samples)}"
+        f"{_FEW_SHOT if require_owner_scope else _UNSCOPED_FEW_SHOT}\n"
         f"Q: {question}\nCypher:"
     )
     try:
-        raw = complete(prompt, system=_SYSTEM)
+        raw = complete(
+            prompt, system=_SYSTEM if require_owner_scope else _UNSCOPED_SYSTEM
+        )
     except LLMError as exc:
         raise QueryError(f"Could not generate a query: {exc}") from exc
-    return _finalise(raw)
+    return _finalise(raw, require_owner_scope=require_owner_scope)
 
 
-def repair_cypher(question: str, bad_cypher: str, error: str) -> str:
+def repair_cypher(
+    question: str,
+    bad_cypher: str,
+    error: str,
+    *,
+    require_owner_scope: bool = False,
+) -> str:
     """Ask the LLM to fix a Cypher query that failed, given the DB error."""
     prompt = (
         f"{SCHEMA_DESCRIPTION}\n"
@@ -175,10 +253,12 @@ def repair_cypher(question: str, bad_cypher: str, error: str) -> str:
         "Corrected Cypher:"
     )
     try:
-        raw = complete(prompt, system=_SYSTEM)
+        raw = complete(
+            prompt, system=_SYSTEM if require_owner_scope else _UNSCOPED_SYSTEM
+        )
     except LLMError as exc:
         raise QueryError(f"Could not repair the query: {exc}") from exc
-    return _finalise(raw)
+    return _finalise(raw, require_owner_scope=require_owner_scope)
 
 
 def phrase_answer(
@@ -201,7 +281,11 @@ def phrase_answer(
         return ""
 
 
-def ask(question: str, store: GraphStore | None = None) -> QueryResult:
+def ask(
+    question: str,
+    store: GraphStore | None = None,
+    owner_id: str | None = None,
+) -> QueryResult:
     """Answer a natural-language question against the graph.
 
     Pipeline: gather real sample values -> translate to Cypher (grounded in
@@ -211,17 +295,28 @@ def ask(question: str, store: GraphStore | None = None) -> QueryResult:
 
     def _answer(s: GraphStore) -> QueryResult:
         try:
-            samples = s.sample_values()
+            samples = (
+                s.sample_values(owner_id=owner_id)
+                if owner_id else s.sample_values()
+            )
         except Exception:  # noqa: BLE001 - sampling is best-effort
             samples = None
 
-        cypher = to_cypher(question, samples)
+        cypher = to_cypher(
+            question, samples, require_owner_scope=owner_id is not None
+        )
         try:
-            rows = s.run_read(cypher)
+            rows = s.run_read(cypher, user_id=owner_id) if owner_id else s.run_read(cypher)
         except Exception as first_exc:  # noqa: BLE001 - try one repair pass
             try:
-                cypher = repair_cypher(question, cypher, str(first_exc))
-                rows = s.run_read(cypher)
+                cypher = repair_cypher(
+                    question, cypher, str(first_exc),
+                    require_owner_scope=owner_id is not None,
+                )
+                rows = (
+                    s.run_read(cypher, user_id=owner_id)
+                    if owner_id else s.run_read(cypher)
+                )
             except QueryError:
                 raise
             except Exception:  # noqa: BLE001 - repair also failed

@@ -13,6 +13,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Repo root = two levels up from this file (smart_extract/config.py -> repo/).
@@ -36,6 +37,20 @@ class Settings(BaseSettings):
     neo4j_uri: str = "bolt://localhost:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = "changeme"
+
+    # --- Application authentication ---
+    # No usable default is intentional: deployment must provide a strong secret.
+    auth_secret: SecretStr = SecretStr("replace-this-with-a-random-secret")
+    auth_token_ttl_minutes: int = 720
+    auth_cookie_secure: bool = False
+    auth_cookie_name: str = "sentinel_session"
+    cors_allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    max_upload_mb: int = 25
+
+    @property
+    def cors_origins(self) -> list[str]:
+        """Explicit browser origins permitted to call the API."""
+        return [value.strip() for value in self.cors_allowed_origins.split(",") if value.strip()]
 
     # --- LLM seam (OpenAI-compatible; model-agnostic) ---
     llm_base_url: str = "https://api.groq.com/openai/v1"
