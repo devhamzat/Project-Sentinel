@@ -55,4 +55,7 @@ def read_pdf(path: str | Path) -> IntakeResult:
         source_path=path,
         arxiv_id=arxiv_id_from_name(path),
         source_kind="digital",
+        # Keep per-page text so chunks can record which page they came from; the
+        # joined ``text`` above stays the source of truth for extraction.
+        pages=pages,
     )

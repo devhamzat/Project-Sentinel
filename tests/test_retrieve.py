@@ -242,6 +242,59 @@ def test_index_paper_writes_chunks_keyed_by_arxiv_id(fake_embed):
     assert chunk_params["rows"][0]["embedding"] == [1.0, 0.0, 0.0]
 
 
+def test_chunk_pages_tags_each_chunk_with_its_page():
+    from smart_extract.query.retrieve import chunk_pages
+
+    pages = ["First page content here.", "Second page content here."]
+    tagged = chunk_pages(pages)
+    # Short pages -> one chunk each; pages are numbered from 1 in reading order.
+    assert [pg for _, pg in tagged] == [1, 2]
+    assert "First page" in tagged[0][0]
+    assert "Second page" in tagged[1][0]
+
+
+def test_index_paper_records_page_when_pages_given(fake_embed):
+    from smart_extract.query.retrieve import index_paper
+
+    store = FakeStore()
+    pages = ["Alpha content on page one.", "Beta content on page two."]
+    n = index_paper(store, "2606.18237", "A Paper", "\n".join(pages), pages=pages)
+    assert n == 2
+    _, chunk_params = store.writes[2]
+    rows = chunk_params["rows"]
+    assert [r["page"] for r in rows] == [1, 2]
+
+
+def test_index_paper_page_is_null_without_pages(fake_embed):
+    from smart_extract.query.retrieve import index_paper
+
+    store = FakeStore()
+    index_paper(store, "2606.18237", "A Paper", "Some body text.")
+    _, chunk_params = store.writes[2]
+    # Backward compatible: no pages -> page is null, OCR lane unaffected.
+    assert chunk_params["rows"][0]["page"] is None
+
+
+def test_passage_label_includes_page_when_known():
+    from smart_extract.query.retrieve import Chunk, _passage_label
+
+    with_page = Chunk(None, "Some Paper", "text", chunk_index=0, page=6)
+    without = Chunk(None, "Some Paper", "text", chunk_index=0)
+    assert _passage_label(with_page) == '[from "Some Paper", p.6]'
+    assert _passage_label(without) == '[from "Some Paper"]'
+
+
+def test_retrieve_carries_page_into_chunk(fake_embed):
+    from smart_extract.query.retrieve import retrieve
+
+    store = FakeStore(read_rows=[
+        {"arxiv_id": "2606.18237", "title": "A Paper", "text": "passage",
+         "chunk_index": 3, "page": 6, "score": 0.91},
+    ])
+    result = retrieve("q", k=1, store=store)
+    assert result.chunks[0].page == 6
+
+
 def test_index_paper_falls_back_to_title_key(fake_embed):
     from smart_extract.query.retrieve import index_paper
 

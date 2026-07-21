@@ -52,7 +52,7 @@ def ingest_paper(
         try:
             chunks_indexed = index_paper(
                 store, intake.arxiv_id, paper["title"], intake.text,
-                owner_id=owner_id,
+                owner_id=owner_id, pages=intake.pages,
             )
         except Exception as exc:  # noqa: BLE001 - semantic index is an add-on
             chunks_error = str(exc)

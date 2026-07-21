@@ -80,6 +80,7 @@ class ChunkHit(BaseModel):
     text: str
     chunk_index: int
     score: float
+    page: int | None = None
 
 
 class SearchResponse(BaseModel):
@@ -335,6 +336,7 @@ def search(
                 text=c.text,
                 chunk_index=c.chunk_index,
                 score=c.score,
+                page=c.page,
             )
             for c in result.chunks
         ],

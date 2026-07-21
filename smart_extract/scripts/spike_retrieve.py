@@ -81,7 +81,7 @@ def main() -> int:
                 )
 
             n = index_paper(store, aid, existing[0]["t"] if existing else pdf.stem,
-                            intake.text)
+                            intake.text, pages=intake.pages)
             print(f"Indexed {n} chunks with embeddings + vector index.\n")
 
             for q in queries:

@@ -146,7 +146,10 @@ function Passages({ chunks }) {
             <span className="passage-score" title="cosine similarity">{hit.score.toFixed(3)}</span>
           </div>
           <p className="passage-text">{hit.text}</p>
-          <p className="passage-meta">passage #{hit.chunk_index}</p>
+          <p className="passage-meta">
+            passage #{hit.chunk_index}
+            {hit.page ? ` · p.${hit.page}` : ""}
+          </p>
         </div>
       ))}
     </div>

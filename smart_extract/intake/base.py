@@ -31,6 +31,10 @@ class IntakeResult:
     source_path: Path
     arxiv_id: str | None       # parsed from the filename when present
     source_kind: SourceKind    # "digital" (PDF text layer) or "photo" (OCR)
+    pages: list[str] | None = None  # per-page text when the lane knows page
+    #                                 boundaries (digital PDF); None for OCR/photo.
+    #                                 ``text`` stays the source of truth; ``pages``
+    #                                 is an optional locator hint for chunking.
 
 
 def arxiv_id_from_name(path: Path) -> str | None:

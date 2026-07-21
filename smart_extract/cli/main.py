@@ -193,12 +193,13 @@ def _cmd_search(query: str, k: int, session: CliSession) -> int:
         return 0
     for chunk in result["chunks"]:
         label = f" (arXiv {chunk['arxiv_id']})" if chunk.get("arxiv_id") else ""
+        locator = f", p.{chunk['page']}" if chunk.get("page") else ""
         preview = " ".join(chunk["text"].split())
         if len(preview) > 300:
             preview = preview[:300] + "..."
         print(
             f"[{chunk['score']:.3f}] {chunk['title']}{label} - "
-            f"passage #{chunk['chunk_index']}"
+            f"passage #{chunk['chunk_index']}{locator}"
         )
         print(f"    {preview}\n")
     return 0

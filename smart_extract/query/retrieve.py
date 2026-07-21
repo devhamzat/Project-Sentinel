@@ -43,6 +43,7 @@ class Chunk:
     text: str
     chunk_index: int
     score: float = 0.0  # cosine similarity, filled in by search
+    page: int | None = None  # 1-based source page, when the intake lane knew it
 
 
 @dataclass
@@ -262,6 +263,23 @@ def chunk_text(text: str, target_chars: int = 1200, overlap_chars: int = 180) ->
     return [c for c in chunks if c]
 
 
+def chunk_pages(pages: list[str]) -> list[tuple[str, int]]:
+    """Chunk page-by-page, tagging each chunk with its 1-based page number.
+
+    A thin wrapper over ``chunk_text`` that preserves page provenance for
+    citation locators. Chunking each page independently (rather than the whole
+    document at once) keeps every chunk on a single page, so its page number is
+    unambiguous — at the cost of not merging a short page tail with the next
+    page's head, which is an acceptable trade for a clean locator. Returns
+    ``(chunk_text, page_number)`` pairs in reading order.
+    """
+    out: list[tuple[str, int]] = []
+    for page_no, page_text in enumerate(pages, start=1):
+        for chunk in chunk_text(page_text):
+            out.append((chunk, page_no))
+    return out
+
+
 # --- index / store / search (touch the DB) -----------------------------------
 
 
@@ -292,6 +310,7 @@ def index_paper(
     title: str,
     text: str,
     owner_id: str | None = None,
+    pages: list[str] | None = None,
 ) -> int:
     """Chunk, embed, and store a paper's passages. Returns the chunk count.
 
@@ -299,20 +318,32 @@ def index_paper(
     the arXiv id when known, else the title (MERGE cannot key on null), so
     re-indexing replaces rather than duplicates. Creates the vector index on
     first call, sized to the dimension the embedding model actually returned.
+
+    When ``pages`` (per-page text, e.g. from the digital-PDF lane) is given,
+    chunks are cut page-by-page and each records its 1-based source page so the
+    grounded answer can cite a locator (``p.6``). Without it, the whole ``text``
+    is chunked as before and page is null — the OCR lane and older callers are
+    unaffected.
     """
     identity = arxiv_id or title
     if not identity:
         return 0
     paper_key = f"{owner_id}:{identity}" if owner_id else identity
-    chunks = [c for c in chunk_text(text) if not looks_like_references(c)]
-    if not chunks:
+    if pages:
+        tagged = [
+            (c, pg) for c, pg in chunk_pages(pages) if not looks_like_references(c)
+        ]
+    else:
+        tagged = [(c, None) for c in chunk_text(text) if not looks_like_references(c)]
+    if not tagged:
         return 0
+    chunks = [c for c, _ in tagged]
     vectors = embed(chunks)
     ensure_vector_index(store, dimensions=len(vectors[0]))
 
     rows = [
-        {"i": i, "text": c, "embedding": v}
-        for i, (c, v) in enumerate(zip(chunks, vectors))
+        {"i": i, "text": c, "embedding": v, "page": pg}
+        for i, ((c, pg), v) in enumerate(zip(tagged, vectors))
     ]
     store.run_write(
         """
@@ -326,7 +357,7 @@ def index_paper(
         UNWIND $rows AS row
         MERGE (c:Chunk {paper_key: $paper_key, chunk_index: row.i})
         SET c.text = row.text, c.embedding = row.embedding,
-            c.owner_id = $owner_id
+            c.owner_id = $owner_id, c.page = row.page
         MERGE (p)-[:HAS_CHUNK]->(c)
         """,
         arxiv_id=arxiv_id, title=title, paper_key=paper_key, rows=rows,
@@ -367,7 +398,8 @@ def retrieve(
                     MATCH (w:Workspace {{id:$owner_id}})-[:OWNS]->(p:Paper)-[:HAS_CHUNK]->(c)
                     WHERE c.owner_id = $owner_id
                     RETURN p.arxiv_id AS arxiv_id, p.title AS title,
-                           c.text AS text, c.chunk_index AS chunk_index, score
+                           c.text AS text, c.chunk_index AS chunk_index,
+                           c.page AS page, score
                     ORDER BY score DESC LIMIT $k
                     """,
                     candidate_k=max(100, k * 20), k=k, vec=query_vec,
@@ -380,7 +412,8 @@ def retrieve(
                     YIELD node AS c, score
                     MATCH (p:Paper)-[:HAS_CHUNK]->(c)
                     RETURN p.arxiv_id AS arxiv_id, p.title AS title,
-                           c.text AS text, c.chunk_index AS chunk_index, score
+                           c.text AS text, c.chunk_index AS chunk_index,
+                           c.page AS page, score
                     ORDER BY score DESC
                     """,
                     k=k, vec=query_vec,
@@ -399,6 +432,7 @@ def retrieve(
                 text=r.get("text") or "",
                 chunk_index=r.get("chunk_index", -1),
                 score=float(r.get("score", 0.0)),
+                page=r.get("page"),
             )
             for r in rows
         ]
@@ -418,9 +452,18 @@ _GROUNDED_SYSTEM = (
     "You answer a user's question using ONLY the provided passages from academic "
     "papers. Write a short, direct answer (2-4 sentences). Cite papers by the "
     'title given in the [from "..."] label above each passage — never by titles '
-    "that merely appear inside the passage text. If the passages do not contain "
-    "the answer, say so plainly — never invent facts that are not in the passages."
+    "that merely appear inside the passage text. When the label includes a page "
+    "(e.g. p.6), you may include it in the citation. If the passages do not "
+    "contain the answer, say so plainly — never invent facts that are not in the "
+    "passages."
 )
+
+
+def _passage_label(chunk: Chunk) -> str:
+    """Attribution label above a passage: the paper title, plus page if known."""
+    if chunk.page:
+        return f'[from "{chunk.paper_title}", p.{chunk.page}]'
+    return f'[from "{chunk.paper_title}"]'
 
 
 def phrase_grounded_answer(query: str, chunks: list[Chunk]) -> str:
@@ -432,7 +475,7 @@ def phrase_grounded_answer(query: str, chunks: list[Chunk]) -> str:
     if not chunks:
         return ""
     passages = "\n\n".join(
-        f'[from "{c.paper_title}"]\n{c.text}' for c in chunks
+        f"{_passage_label(c)}\n{c.text}" for c in chunks
     )
     body = f"Question: {query}\n\nPassages:\n{passages}"
     try:
