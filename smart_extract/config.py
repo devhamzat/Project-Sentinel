@@ -42,6 +42,24 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "llama-3.1-8b-instant"
 
+    # --- Embedding seam (SPIKE: semantic retrieval, see docs/design-retrieve.md) ---
+    # Embeddings often come from a DIFFERENT provider than chat (e.g. Groq serves
+    # chat but not embeddings). These default to the chat seam's URL/key when left
+    # blank, so a single OpenAI-compatible endpoint that serves both still works.
+    llm_embed_base_url: str = ""
+    llm_embed_api_key: str = ""
+    llm_embed_model: str = "text-embedding-3-small"
+
+    @property
+    def embed_base_url(self) -> str:
+        """Embedding endpoint, falling back to the chat seam's base URL."""
+        return self.llm_embed_base_url or self.llm_base_url
+
+    @property
+    def embed_api_key(self) -> str:
+        """Embedding key, falling back to the chat seam's key."""
+        return self.llm_embed_api_key or self.llm_api_key
+
     # --- OCR (image/photo lane) ---
     # Path to the Tesseract engine. Empty => rely on PATH. On Windows the
     # UB-Mannheim installer's default is C:\Program Files\Tesseract-OCR\.

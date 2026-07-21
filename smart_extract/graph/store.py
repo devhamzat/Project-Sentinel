@@ -76,6 +76,18 @@ class GraphStore:
             result = session.run(cypher, **params)
             return [record.data() for record in result]
 
+    def run_write(self, cypher: str, **params: Any) -> list[dict[str, Any]]:
+        """Run a write/DDL query (used by the retrieval spike: index + chunks).
+
+        Kept separate from ``run_read`` because the NL->Cypher path must only
+        ever call ``run_read`` (its read-only guard depends on that). This method
+        is for trusted internal Cypher (vector index creation, chunk writes), not
+        for model-generated queries.
+        """
+        with self._driver.session() as session:
+            result = session.run(cypher, **params)
+            return [record.data() for record in result]
+
     def counts(self) -> dict[str, int]:
         """Return node/relationship counts for the dashboard summary."""
         out: dict[str, int] = {}

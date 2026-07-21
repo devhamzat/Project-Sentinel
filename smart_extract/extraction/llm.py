@@ -41,6 +41,23 @@ def _client() -> OpenAI:
     return OpenAI(base_url=settings.llm_base_url, api_key=settings.llm_api_key)
 
 
+@lru_cache
+def _embed_client() -> OpenAI:
+    """Build the embeddings client (may target a different provider than chat).
+
+    Embeddings frequently live behind a different endpoint than chat (e.g. Groq
+    serves chat but not embeddings). Defaults fall back to the chat seam's
+    URL/key via ``settings.embed_*`` when the dedicated ones are unset.
+    """
+    if not settings.embed_api_key:
+        raise LLMError(
+            "No embedding API key. Set LLM_EMBED_API_KEY (or LLM_API_KEY) in .env. "
+            "Note: the chat provider may not serve embeddings — point "
+            "LLM_EMBED_BASE_URL at one that does."
+        )
+    return OpenAI(base_url=settings.embed_base_url, api_key=settings.embed_api_key)
+
+
 def _chat(prompt: str, system: str | None, *, json_mode: bool = False) -> str:
     """Send a single-turn chat request and return the raw assistant text."""
     messages: list[dict[str, str]] = []
@@ -89,6 +106,31 @@ def extract_json(prompt: str, system: str | None = None) -> dict[str, Any]:
         if recovered is not None:
             return recovered
         raise LLMError(f"LLM did not return valid JSON. Got:\n{raw[:500]}")
+
+
+def embed(texts: list[str]) -> list[list[float]]:
+    """Return one embedding vector per input text via the embeddings seam.
+
+    SPIKE (semantic retrieval — see docs/design-retrieve.md). Batched in one
+    request. Raises LLMError on failure or a malformed response, like the rest
+    of the seam. Model is ``LLM_EMBED_MODEL``; endpoint is the embed seam.
+    """
+    if not texts:
+        return []
+    try:
+        resp = _embed_client().embeddings.create(
+            model=settings.llm_embed_model, input=texts
+        )
+    except Exception as exc:  # network, auth, model-not-found, unsupported, ...
+        raise LLMError(f"Embedding request failed: {exc}") from exc
+
+    # The API returns items possibly out of order; sort by .index to be safe.
+    items = sorted(resp.data, key=lambda d: d.index)
+    if len(items) != len(texts):
+        raise LLMError(
+            f"Embedding count mismatch: asked {len(texts)}, got {len(items)}."
+        )
+    return [list(item.embedding) for item in items]
 
 
 def _extract_json_object(text: str) -> dict[str, Any] | None:

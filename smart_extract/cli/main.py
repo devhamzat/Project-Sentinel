@@ -1,9 +1,10 @@
 """Command-line interface — a thin door onto the backend.
 
 Commands:
-    sentinel ingest <path>     # ingest a PDF or photo into the graph
-    sentinel ask "<question>"  # natural-language query (NL -> Cypher)
-    sentinel stats             # node/relationship counts
+    sentinel ingest <path>       # ingest a PDF or photo into the graph
+    sentinel ask "<question>"    # natural-language query (NL -> Cypher)
+    sentinel search "<query>"    # semantic search over paper content
+    sentinel stats               # node/relationship counts
 
 Or without the console script: python -m smart_extract.cli.main <command> ...
 
@@ -19,6 +20,7 @@ import sys
 from smart_extract.extraction.llm import LLMError
 from smart_extract.intake import IntakeError
 from smart_extract.query.nl2cypher import QueryError
+from smart_extract.query.retrieve import RetrievalError
 from smart_extract import service
 
 
@@ -53,6 +55,11 @@ def _cmd_ingest(path: str) -> int:
         if v.get(field):
             print(f"  filtered {field.replace('dropped_', '')}: {v[field]}")
 
+    if result.get("chunks_error"):
+        print(f"  note: semantic index skipped — {result['chunks_error']}")
+    elif result.get("chunks_indexed"):
+        print(f"  indexed {result['chunks_indexed']} passage(s) for semantic search.")
+
     print(
         f"OK - stored Paper '{result['title'] or label}' with "
         f"{c['authors']} author(s), {c['datasets']} dataset(s)."
@@ -83,6 +90,34 @@ def _cmd_ask(question: str) -> int:
     return 0
 
 
+def _cmd_search(query: str, k: int) -> int:
+    try:
+        result = service.search_content(query, k=k)
+    except RetrievalError as exc:
+        print(f"FAILED - {exc}")
+        return 1
+    except LLMError as exc:
+        print(f"FAILED - {exc}")
+        return 1
+    except Exception as exc:  # noqa: BLE001
+        print(f"FAILED - {exc}")
+        return 1
+
+    if result.answer:
+        print(result.answer + "\n")
+    if not result.chunks:
+        print("(no matching passages)")
+        return 0
+    for c in result.chunks:
+        label = f" (arXiv {c.paper_arxiv_id})" if c.paper_arxiv_id else ""
+        preview = " ".join(c.text.split())
+        if len(preview) > 300:
+            preview = preview[:300] + "…"
+        print(f"[{c.score:.3f}] {c.paper_title}{label} — passage #{c.chunk_index}")
+        print(f"    {preview}\n")
+    return 0
+
+
 def _cmd_stats() -> int:
     try:
         counts = service.graph_summary()
@@ -106,6 +141,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_ask = sub.add_parser("ask", help="ask a natural-language question (NL -> Cypher)")
     p_ask.add_argument("question", help="the question, in quotes")
+
+    p_search = sub.add_parser(
+        "search", help="find passages by meaning across ingested papers"
+    )
+    p_search.add_argument("query", help="what to look for, in quotes")
+    p_search.add_argument("-k", type=int, default=5, help="number of passages (default 5)")
 
     sub.add_parser("stats", help="show node/relationship counts")
     return parser
@@ -136,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_ingest(args.path)
     if args.command == "ask":
         return _cmd_ask(args.question)
+    if args.command == "search":
+        return _cmd_search(args.query, args.k)
     if args.command == "stats":
         return _cmd_stats()
     return 1

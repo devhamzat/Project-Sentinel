@@ -3,9 +3,10 @@ import { THEMES } from "../useTheme.js";
 import Docs from "./Docs.jsx";
 
 const THEME_META = {
-  light: { name: "Light",    desc: "Clean white"    },
-  dark:  { name: "Dark",     desc: "Deep slate"     },
-  mono:  { name: "Mono",     desc: "Grayscale only" },
+  watchtower: { name: "Watchtower", desc: "Graphite & amber" },
+  light:      { name: "Light",      desc: "Clean white"      },
+  dark:       { name: "Dark",       desc: "Deep slate"       },
+  mono:       { name: "Mono",       desc: "Grayscale only"   },
 };
 
 function ThemePreview({ theme }) {

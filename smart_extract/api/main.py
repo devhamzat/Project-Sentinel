@@ -4,6 +4,7 @@ Endpoints (all call smart_extract.service, same logic as the CLI):
   GET  /health            -> liveness
   GET  /stats             -> node/relationship counts
   POST /ask    {question} -> NL -> Cypher, runs it, returns cypher + rows
+  POST /search {query, k} -> semantic search: ranked passages + grounded answer
   POST /ingest (upload)   -> ingest an uploaded PDF/image into the graph
 
 CORS is open for local development so the separate React dashboard can call it.
@@ -24,6 +25,7 @@ from smart_extract import service
 from smart_extract.extraction.llm import LLMError
 from smart_extract.intake import IntakeError
 from smart_extract.query.nl2cypher import QueryError
+from smart_extract.query.retrieve import RetrievalError
 
 app = FastAPI(
     title="Smart Data Extraction API",
@@ -49,6 +51,25 @@ class AskResponse(BaseModel):
     cypher: str
     rows: list[dict]
     answer: str
+
+
+class SearchRequest(BaseModel):
+    query: str
+    k: int = 5
+
+
+class ChunkHit(BaseModel):
+    arxiv_id: str | None
+    title: str
+    text: str
+    chunk_index: int
+    score: float
+
+
+class SearchResponse(BaseModel):
+    query: str
+    answer: str
+    chunks: list[ChunkHit]
 
 
 @app.get("/health")
@@ -80,6 +101,35 @@ def ask(req: AskRequest) -> AskResponse:
         cypher=result.cypher,
         rows=result.rows,
         answer=result.answer,
+    )
+
+
+@app.post("/search", response_model=SearchResponse)
+def search(req: SearchRequest) -> SearchResponse:
+    query = req.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Query must not be empty.")
+    try:
+        result = service.search_content(query, k=max(1, min(req.k, 20)))
+    except RetrievalError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except LLMError as exc:
+        raise HTTPException(status_code=502, detail=f"LLM error: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc))
+    return SearchResponse(
+        query=result.query,
+        answer=result.answer,
+        chunks=[
+            ChunkHit(
+                arxiv_id=c.paper_arxiv_id,
+                title=c.paper_title,
+                text=c.text,
+                chunk_index=c.chunk_index,
+                score=c.score,
+            )
+            for c in result.chunks
+        ],
     )
 
 

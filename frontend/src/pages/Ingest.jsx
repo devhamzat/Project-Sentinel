@@ -54,7 +54,7 @@ export default function Ingest({ onIngested }) {
   }
 
   return (
-    <div>
+    <div className="constellation">
       <div className="page-header">
         <h1 className="page-title">Ingest a Paper</h1>
         <p className="page-desc">

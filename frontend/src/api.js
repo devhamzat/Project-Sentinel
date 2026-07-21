@@ -29,6 +29,14 @@ export function ask(question) {
   }).then(handle);
 }
 
+export function search(query, k = 5) {
+  return fetch(`${BASE}/search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, k }),
+  }).then(handle);
+}
+
 export function ingest(file) {
   const form = new FormData();
   form.append("file", file);

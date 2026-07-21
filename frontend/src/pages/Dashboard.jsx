@@ -44,7 +44,7 @@ export default function Dashboard() {
     : null;
 
   return (
-    <div>
+    <div className="constellation">
       <div className="page-header">
         <h1 className="page-title">Knowledge Graph</h1>
         <p className="page-desc">Live counts from your Neo4j instance.</p>
