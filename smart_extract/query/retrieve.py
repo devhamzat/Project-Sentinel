@@ -56,10 +56,21 @@ class RetrievalResult:
 
 
 # Signals that a chunk is bibliography, not content: bracketed citation
-# markers, publication years, and venue boilerplate.
+# markers, publication years, venue boilerplate, and links (URLs / DOIs).
 _CITATION_MARKER = re.compile(r"\[\d+\]")
 _YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
 _VENUE = re.compile(r"(?i)arxiv preprint|in proceedings|doi:\s*10\.|pages \d+")
+_URL_DOI = re.compile(r"(?i)https?://|www\.|doi:\s*10\.|10\.\d{4,}/")
+# A chunk that *opens* with a bibliography fragment: a bare URL/DOI or a
+# leading [n] citation marker at the very start (a citation split mid-entry).
+_LEADS_WITH_REF = re.compile(r"(?i)^\s*(?:url\s+)?(?:https?://|www\.|doi:|\[\d+\]\s)")
+# Connective "function words" that flowing prose is dense in but reference
+# lists (names, titles, venues, years) are not — used to spare genuine content
+# that merely cites links from the link-based bibliography rules.
+_FUNCTION_WORD = re.compile(
+    r"(?i)\b(?:the|of|and|to|that|is|are|we|with|this|these|for|which|be|by|"
+    r"as|in|on|our|from|can|has|have|not|it|its|an|a)\b"
+)
 
 
 def looks_like_references(chunk: str) -> bool:
@@ -72,17 +83,41 @@ def looks_like_references(chunk: str) -> bool:
     references often sit mid-document, followed by appendices that are worth
     keeping. A content chunk with a few inline citations like [3, 4] stays:
     the thresholds require entry-like density — many [n] markers AND many
-    years, or repeated venue boilerplate.
+    years, repeated venue boilerplate, or a cluster of links (URLs/DOIs), which
+    prose almost never carries but reference entries almost always do.
     """
     markers = len(_CITATION_MARKER.findall(chunk))
     years = len(_YEAR.findall(chunk))
     venues = len(_VENUE.findall(chunk))
+    links = len(_URL_DOI.findall(chunk))
     # A chunk boundary can land mid-entry, leaving mostly comma-separated
     # author names with a single venue string — catch that by comma density.
     commas_per_1k = chunk.count(",") * 1000 / max(len(chunk), 1)
+    # Flowing prose is dense in connective function words; reference lists are
+    # not. A chunk above this density is genuine content (e.g. a dataset- or
+    # tooling-heavy methods paragraph citing several URLs) and must be spared
+    # the link-based rules below, which would otherwise wrongly drop it.
+    func_per_1k = len(_FUNCTION_WORD.findall(chunk)) * 1000 / max(len(chunk), 1)
+    is_prose = func_per_1k >= 18
+
     if markers >= 4 and years >= 4:
         return True
     if venues >= 3:
+        return True
+    # Links are a strong bibliography signal, but only in non-prose: a cluster
+    # of URLs/DOIs, or a single link in a short link-heavy fragment (a citation
+    # split mid-entry). A prose paragraph that happens to cite a dataset or tool
+    # URL stays — important for the dataset-centric papers this project targets.
+    if not is_prose:
+        if links >= 2:
+            return True
+        if links >= 1 and (venues >= 1 or years >= 1) and len(chunk) <= 300:
+            return True
+    # A chunk that opens with a bare URL/DOI or a leading [n] marker is the tail
+    # of one reference bleeding into the next entry; require a corroborating
+    # venue, year, or citation marker so a section that merely starts by quoting
+    # a link (with none of those) is left alone.
+    if _LEADS_WITH_REF.match(chunk) and (venues >= 1 or years >= 1 or markers >= 1):
         return True
     return venues >= 1 and commas_per_1k >= 20
 

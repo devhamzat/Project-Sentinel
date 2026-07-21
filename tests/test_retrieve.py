@@ -112,6 +112,46 @@ def test_plain_content_is_kept():
     )
 
 
+def test_reference_fragment_with_links_is_detected():
+    from smart_extract.query.retrieve import looks_like_references
+
+    # A citation split mid-entry: no [n] markers, but a DOI and a URL in a short,
+    # low-prose fragment — the pattern the char-based chunker leaves at boundaries.
+    frag = (
+        "Curran Associates, Inc., 2024. doi: 10.52202/079017-0963. "
+        "URL https://proceedings.neurips.cc/paper/2024/file/abc-Paper.pdf. 13"
+    )
+    assert looks_like_references(frag)
+
+
+def test_chunk_leading_with_url_then_citation_is_detected():
+    from smart_extract.query.retrieve import looks_like_references
+
+    # Opens with a bare URL (tail of one entry) then the next [n] entry begins.
+    chunk = (
+        "URL https://arxiv.org/abs/2508.16671. [29] Hui Chen, James Xu Zhao, "
+        "Dongfu Jiang, and Bryan Hooi. FabScore: evaluation of fabrications."
+    )
+    assert looks_like_references(chunk)
+
+
+def test_prose_citing_dataset_urls_is_kept():
+    from smart_extract.query.retrieve import looks_like_references
+
+    # Genuine methods prose that cites several dataset URLs must survive: the
+    # link count is high but function-word density marks it as real content.
+    # This guards the dataset-centric papers this project targets.
+    content = (
+        "This dataset consists of demographic information of subjects, along "
+        "with their answers to fifty survey questions that we use to evaluate "
+        "the model. We collected it from two public sources and cleaned the "
+        "responses. See https://www.kaggle.com/datasets/example-one and also "
+        "https://www.kaggle.com/datasets/example-two for the raw data that we "
+        "processed, which we then split into training and evaluation folds."
+    )
+    assert not looks_like_references(content)
+
+
 def test_index_paper_skips_bibliography_chunks(fake_embed):
     from smart_extract.query.retrieve import index_paper
 
