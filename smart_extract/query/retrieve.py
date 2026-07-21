@@ -132,6 +132,10 @@ def _split_paragraphs(text: str) -> list[str]:
 # A sentence end: ., ! or ? (optionally closed by a quote/bracket) followed by
 # whitespace or end of string. Used to prefer clean cut points over mid-word.
 _SENTENCE_END = re.compile(r"[.!?][\"')\]]?(?=\s|$)")
+# A line break and any whitespace run — the lower rungs of the boundary ladder,
+# so a cut lands on a line or at least a word boundary, never inside a word.
+_NEWLINE = re.compile(r"\n+")
+_WHITESPACE = re.compile(r"\s+")
 
 
 def _overlap_tail(text: str, overlap_chars: int) -> str:
@@ -142,8 +146,8 @@ def _overlap_tail(text: str, overlap_chars: int) -> str:
     rather than a mid-word char slice. Return the longest run of complete
     sentences at the end of ``text`` that fits within ``overlap_chars``. If the
     final sentence alone is longer than the budget (or the text has no sentence
-    break at all), fall back to the raw ``overlap_chars`` slice so the boundary
-    is still covered.
+    break at all), fall back to an ``overlap_chars`` slice that still starts on a
+    word boundary, so the carried-over tail never opens mid-word.
     """
     if overlap_chars <= 0:
         return ""
@@ -159,24 +163,50 @@ def _overlap_tail(text: str, overlap_chars: int) -> str:
             break
     if start is not None and start < len(text):
         return text[start:].lstrip()
-    return text[-overlap_chars:]
+    # No sentence break in the budget: take an overlap-sized tail but advance to a
+    # word boundary so it does not begin inside a word ("caus|e" -> "e ...").
+    return text[_word_start(text, threshold):].lstrip()
+
+
+def _last_match_end(pattern: re.Pattern[str], piece: str, floor: int, target: int) -> int:
+    """Index just after the last ``pattern`` match in ``piece[floor:target]``, or -1."""
+    best = -1
+    for m in pattern.finditer(piece, floor, target):
+        best = m.end()
+    return best
 
 
 def _find_cut(piece: str, target: int, floor: int) -> int:
     """Return the index to cut ``piece`` at, at or before ``target``.
 
-    Prefer the last sentence end that lands in the window ``[floor, target]`` so
-    a chunk stops on a clean boundary. If the piece is shorter than ``target``,
-    cut at its end. If no sentence end sits in the window (e.g. a long unbroken
-    run with no punctuation), fall back to the hard length cut at ``target`` so
-    oversized pieces still split.
+    Walks a boundary ladder, best first, so a chunk stops as cleanly as the text
+    allows and — critically — NEVER inside a word:
+
+      1. a sentence end (. ! ?) within ``[floor, target]``;
+      2. else a line break (newline) within ``[floor, target]`` — line-structured
+         PDF text (headings, list items, code) rarely has blank lines but breaks
+         cleanly on newlines;
+      3. else the last whitespace at/just before ``target`` — a word boundary, so
+         we never split a word like "instruc|tions";
+      4. else (a single ``target``-long token with no whitespace at all, e.g. a
+         URL) the hard length cut at ``target``.
+
+    If the piece is shorter than ``target``, cut at its end.
     """
     if len(piece) <= target:
         return len(piece)
-    best = -1
-    for m in _SENTENCE_END.finditer(piece, floor, target):
-        best = m.end()
-    return best if best != -1 else target
+    sentence = _last_match_end(_SENTENCE_END, piece, floor, target)
+    if sentence != -1:
+        return sentence
+    newline = _last_match_end(_NEWLINE, piece, floor, target)
+    if newline != -1:
+        return newline
+    # Word boundary: the last whitespace up to target (search a bit past floor so
+    # a very long token near the start still finds an earlier space).
+    word = _last_match_end(_WHITESPACE, piece, 1, target)
+    if word != -1:
+        return word
+    return target
 
 
 def _hard_split(piece: str, target_chars: int, overlap_chars: int) -> list[str]:
@@ -201,18 +231,59 @@ def _hard_split(piece: str, target_chars: int, overlap_chars: int) -> list[str]:
             windows.append(window)
         if end >= len(piece):
             break
-        # Begin the next window overlap_chars back, but snap forward to the last
-        # sentence end in that region so a window starts on a fresh sentence
-        # rather than mid-word. Always advance to avoid looping on unbroken text.
+        # Begin the next window overlap_chars back, snapped FORWARD to a clean
+        # boundary so it starts on a fresh sentence/line/word — never mid-word.
+        # Prefer a sentence end, then a line break, then a word boundary; each is
+        # taken only if it falls strictly before the window end (that boundary
+        # belongs to this window). Always advance to avoid looping on unbroken text.
         raw_start = max(0, end - overlap_chars)
-        snapped = raw_start
-        for m in _SENTENCE_END.finditer(piece, raw_start, end):
-            # Skip a sentence end that coincides with the window end — that
-            # boundary belongs to this window, not the start of the next.
-            if m.end() < end:
-                snapped = m.end()
-        start = max(start + 1, snapped)
+        snapped = _snap_start(piece, raw_start, end)
+        candidate = max(start + 1, snapped)
+        # Final guarantee: whatever index we picked, never begin inside a word.
+        # If it lands mid-word, skip forward past that partial word.
+        start = _word_start(piece, candidate)
     return windows
+
+
+def _word_start(piece: str, i: int) -> int:
+    """Smallest index >= ``i`` that begins a whole word (not mid-word).
+
+    If ``piece[i]`` continues a word (its previous char is also word-ish), skip
+    ahead to the next whitespace and past it, so a window never opens on a word
+    fragment like "ssification". Returns ``i`` unchanged when it already sits at
+    a boundary. If the partial word runs on with no whitespace ahead (a giant
+    whitespace-free token such as a URL or "xxxx…"), there is no word boundary to
+    honour, so return ``i`` rather than skipping to the end.
+    """
+    if i <= 0 or i >= len(piece):
+        return i
+    if not (piece[i - 1].isalnum() and piece[i].isalnum()):
+        return i  # already at a boundary (prev char is space/punct/newline)
+    j = i
+    while j < len(piece) and not piece[j].isspace():
+        j += 1  # skip the rest of the partial word
+    if j >= len(piece):
+        return i  # no whitespace ahead: an unbreakable token, keep the raw index
+    while j < len(piece) and piece[j].isspace():
+        j += 1  # skip the whitespace to reach the next word
+    return j
+
+
+def _snap_start(piece: str, raw_start: int, end: int) -> int:
+    """Move ``raw_start`` forward to the nearest clean boundary before ``end``.
+
+    Tries a sentence end, then a line break, then a word boundary within
+    ``[raw_start, end)`` so the next window opens on a whole unit rather than
+    inside a word. Falls back to ``raw_start`` when none exists.
+    """
+    for pattern in (_SENTENCE_END, _NEWLINE, _WHITESPACE):
+        best = -1
+        for m in pattern.finditer(piece, raw_start, end):
+            if m.end() < end:
+                best = m.end()
+        if best != -1:
+            return best
+    return raw_start
 
 
 def chunk_text(text: str, target_chars: int = 1200, overlap_chars: int = 180) -> list[str]:

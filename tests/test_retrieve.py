@@ -105,6 +105,46 @@ def test_chunk_text_falls_back_when_no_punctuation():
     assert all(len(c) <= 1200 for c in chunks)
 
 
+def test_chunk_text_never_splits_a_word():
+    from smart_extract.query.retrieve import chunk_text
+
+    # Line-structured text with no blank-line paragraphs and few sentence ends
+    # (headings, list items) — the case that used to fall through to a raw
+    # character cut and split a word like "instruc|tions". Every token in every
+    # chunk must be a whole, recognisable token.
+    words = [f"token{i}" for i in range(800)]
+    text = " ".join(words)
+    for c in chunk_text(text, target_chars=250, overlap_chars=50):
+        for tok in c.split():
+            assert tok.startswith("token"), f"word was split: {tok!r}"
+
+
+def test_chunk_text_breaks_on_newlines_without_blank_lines():
+    from smart_extract.query.retrieve import chunk_text
+
+    # Single-newline separated lines (no blank lines) should still yield chunks
+    # that begin and end on a line boundary, not mid-word.
+    lines = [f"Heading {i}\nsome content on line {i} here" for i in range(80)]
+    text = "\n".join(lines)
+    chunks = chunk_text(text, target_chars=300, overlap_chars=60)
+    assert len(chunks) > 1
+    for c in chunks:
+        assert not c.startswith(" ") and not c.endswith(" ")
+        # no token is a fragment of "Heading"/"content" etc.
+        assert all(len(tok) > 1 for tok in c.split()[:1])
+
+
+def test_chunk_text_giant_token_still_terminates():
+    from smart_extract.query.retrieve import chunk_text
+
+    # A single whitespace-free token (URL-like) has no word boundary, so the
+    # raw-length last resort must still split it and terminate.
+    text = "https://example.com/" + "a" * 3000
+    chunks = chunk_text(text, target_chars=500, overlap_chars=80)
+    assert len(chunks) >= 3
+    assert all(len(c) <= 500 for c in chunks)
+
+
 # --- looks_like_references ---------------------------------------------------
 
 def test_bibliography_chunk_is_detected():
