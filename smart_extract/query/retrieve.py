@@ -128,21 +128,105 @@ def _split_paragraphs(text: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+# A sentence end: ., ! or ? (optionally closed by a quote/bracket) followed by
+# whitespace or end of string. Used to prefer clean cut points over mid-word.
+_SENTENCE_END = re.compile(r"[.!?][\"')\]]?(?=\s|$)")
+
+
+def _overlap_tail(text: str, overlap_chars: int) -> str:
+    """Return trailing context of ``text`` to carry into the next chunk.
+
+    The overlap exists so a passage spanning a chunk boundary is still
+    retrievable, so the ideal tail is one or more *whole* trailing sentences
+    rather than a mid-word char slice. Return the longest run of complete
+    sentences at the end of ``text`` that fits within ``overlap_chars``. If the
+    final sentence alone is longer than the budget (or the text has no sentence
+    break at all), fall back to the raw ``overlap_chars`` slice so the boundary
+    is still covered.
+    """
+    if overlap_chars <= 0:
+        return ""
+    if len(text) <= overlap_chars:
+        return text
+    threshold = len(text) - overlap_chars
+    # Start the tail just after the last sentence end that still leaves the tail
+    # within the overlap budget.
+    start = None
+    for m in _SENTENCE_END.finditer(text):
+        if m.end() >= threshold:
+            start = m.end()
+            break
+    if start is not None and start < len(text):
+        return text[start:].lstrip()
+    return text[-overlap_chars:]
+
+
+def _find_cut(piece: str, target: int, floor: int) -> int:
+    """Return the index to cut ``piece`` at, at or before ``target``.
+
+    Prefer the last sentence end that lands in the window ``[floor, target]`` so
+    a chunk stops on a clean boundary. If the piece is shorter than ``target``,
+    cut at its end. If no sentence end sits in the window (e.g. a long unbroken
+    run with no punctuation), fall back to the hard length cut at ``target`` so
+    oversized pieces still split.
+    """
+    if len(piece) <= target:
+        return len(piece)
+    best = -1
+    for m in _SENTENCE_END.finditer(piece, floor, target):
+        best = m.end()
+    return best if best != -1 else target
+
+
 def _hard_split(piece: str, target_chars: int, overlap_chars: int) -> list[str]:
-    """Slice an oversized piece of text into overlapping windows by length."""
-    step = max(1, target_chars - overlap_chars)
-    return [piece[i : i + target_chars].strip() for i in range(0, len(piece), step)]
+    """Slice an oversized piece into overlapping windows, preferring sentence ends.
+
+    Each window is grown up to ``target_chars`` but cut back to the last sentence
+    boundary within a tolerance of the target (``_find_cut``), falling back to a
+    raw length cut when the text has no punctuation to break on. The next window
+    starts ``overlap_chars`` before the actual cut so a sentence straddling a
+    boundary is still retrievable.
+    """
+    windows: list[str] = []
+    # Only look for a sentence end in the last portion of the window, so we don't
+    # cut a window drastically short just because an early sentence ended.
+    floor = max(1, target_chars - max(overlap_chars, target_chars // 4))
+    start = 0
+    while start < len(piece):
+        rel_cut = _find_cut(piece[start:], target_chars, floor)
+        end = start + rel_cut
+        window = piece[start:end].strip()
+        if window:
+            windows.append(window)
+        if end >= len(piece):
+            break
+        # Begin the next window overlap_chars back, but snap forward to the last
+        # sentence end in that region so a window starts on a fresh sentence
+        # rather than mid-word. Always advance to avoid looping on unbroken text.
+        raw_start = max(0, end - overlap_chars)
+        snapped = raw_start
+        for m in _SENTENCE_END.finditer(piece, raw_start, end):
+            # Skip a sentence end that coincides with the window end — that
+            # boundary belongs to this window, not the start of the next.
+            if m.end() < end:
+                snapped = m.end()
+        start = max(start + 1, snapped)
+    return windows
 
 
 def chunk_text(text: str, target_chars: int = 1200, overlap_chars: int = 180) -> list[str]:
     """Split clean text into overlapping windows of roughly ``target_chars``.
 
     Deterministic and model-independent: prefers paragraph boundaries, but a
-    paragraph longer than ``target_chars`` is itself hard-split so no chunk is
-    much larger than the target (oversized chunks blur semantic precision and
-    waste embedding budget). Consecutive windows share an ``overlap_chars`` tail
-    so a passage spanning a boundary is still retrievable. Char-based (not
-    tokens) to stay dependency-free; ~1200 chars ≈ a few hundred tokens.
+    paragraph longer than ``target_chars`` is itself split so no chunk is much
+    larger than the target (oversized chunks blur semantic precision and waste
+    embedding budget). Splits prefer the nearest sentence end within a tolerance
+    of the target, falling back to a raw length cut only when the text has no
+    punctuation to break on, so chunks rarely start or end mid-sentence.
+    Consecutive windows share an ``overlap_chars`` tail (also snapped to a
+    sentence where possible) so a passage spanning a boundary is still
+    retrievable. Char-based (not tokens) to stay dependency-free; ~1200 chars ≈
+    a few hundred tokens.
     """
     text = text.strip()
     if not text:
@@ -169,7 +253,7 @@ def chunk_text(text: str, target_chars: int = 1200, overlap_chars: int = 180) ->
             if already_overlapped or not overlap_chars:
                 current = piece
             else:
-                current = (current[-overlap_chars:] + "\n\n" + piece).strip()
+                current = (_overlap_tail(current, overlap_chars) + "\n\n" + piece).strip()
         else:
             current = (current + "\n\n" + piece).strip() if current else piece
     if current.strip():

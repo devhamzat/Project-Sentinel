@@ -79,6 +79,32 @@ def test_chunk_text_no_duplicated_prefix_on_hard_split():
         assert c.count(head) == 1, f"duplicated opening text in chunk: {head!r}"
 
 
+def test_chunk_text_prefers_sentence_boundaries():
+    from smart_extract.query.retrieve import chunk_text
+
+    # A long run of clean sentences forces splitting; every chunk should begin
+    # and end on a sentence, not mid-word.
+    sentences = [f"Sentence number {i} says something useful here." for i in range(60)]
+    text = " ".join(sentences)
+    chunks = chunk_text(text, target_chars=300, overlap_chars=60)
+    assert len(chunks) > 1
+    for c in chunks:
+        assert c.rstrip()[-1] in ".!?", f"chunk does not end on a sentence: {c[-40:]!r}"
+        # Starts with a capital word (a fresh sentence), not a fragment.
+        assert c.lstrip()[0].isupper(), f"chunk starts mid-sentence: {c[:40]!r}"
+
+
+def test_chunk_text_falls_back_when_no_punctuation():
+    from smart_extract.query.retrieve import chunk_text
+
+    # No sentence ends at all: must still split by raw length (no infinite loop,
+    # no ballooning chunk) — guards the hard-cut fallback in _find_cut.
+    text = "x" * 3000
+    chunks = chunk_text(text, target_chars=1000, overlap_chars=100)
+    assert len(chunks) >= 3
+    assert all(len(c) <= 1200 for c in chunks)
+
+
 # --- looks_like_references ---------------------------------------------------
 
 def test_bibliography_chunk_is_detected():
