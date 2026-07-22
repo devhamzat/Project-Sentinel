@@ -163,6 +163,16 @@ class RemoteClient:
             user=body["user"],
         )
 
+    def register(self, email: str, password: str) -> LoginResult:
+        body = self.request(
+            "POST", "/auth/register/token", json={"email": email, "password": password}
+        )
+        return LoginResult(
+            access_token=body["access_token"],
+            expires_at=body["expires_at"],
+            user=body["user"],
+        )
+
     def me(self) -> dict[str, Any]:
         return self.request("GET", "/auth/me")
 

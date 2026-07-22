@@ -98,6 +98,40 @@ def _cmd_login(
     return 0
 
 
+def _cmd_register(
+    email: str | None,
+    api_url: str,
+    cloudflare: bool | None,
+) -> int:
+    try:
+        api_url = normalise_api_url(api_url)
+        use_cloudflare = should_use_cloudflare(api_url) if cloudflare is None else cloudflare
+        cf_token = None
+        if use_cloudflare:
+            print(f"Opening Cloudflare Access for {api_url} ...")
+            cf_token = cloudflare_access_login(api_url)
+        email = email or input("Email: ").strip()
+        password = _password_pair()
+        if password is None:
+            return 1
+        result = RemoteClient(api_url, cloudflare_token=cf_token).register(email, password)
+        session = CliSession(
+            api_url=api_url,
+            sentinel_token=result.access_token,
+            cloudflare_token=cf_token,
+            email=str(result.user["email"]),
+            role=str(result.user["role"]),
+            expires_at=result.expires_at,
+        )
+        save_session(session)
+    except (RemoteError, CliSessionError, KeyError) as exc:
+        print(f"FAILED - {exc}")
+        return 1
+    print(f"OK - created and signed in as {session.email}.")
+    print(f"API: {session.api_url}")
+    return 0
+
+
 def _cmd_logout() -> int:
     try:
         session = load_session()
@@ -283,6 +317,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="use Cloudflare Access (automatic for non-local URLs)",
     )
+    register = sub.add_parser("register", help="create a tester account and sign in")
+    register.add_argument("email", nargs="?", help="new account email")
+    register.add_argument(
+        "--api-url",
+        default=DEFAULT_API_URL,
+        help="API root, e.g. https://sentinel.example.com/api",
+    )
+    register.add_argument(
+        "--cloudflare",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="use Cloudflare Access (automatic for non-local URLs)",
+    )
     sub.add_parser("logout", help="remove the active remote session")
     sub.add_parser("whoami", help="verify and show the active remote account")
 
@@ -297,7 +344,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     users = sub.add_parser("users", help="manage deployment accounts (admin only)")
     user_sub = users.add_subparsers(dest="user_command", required=True)
-    add = user_sub.add_parser("add", help="create an invite-only account")
+    add = user_sub.add_parser("add", help="create an account as an administrator")
     add.add_argument("email")
     add.add_argument("--role", choices=("admin", "tester"), default="tester")
     user_sub.add_parser("list", help="list provisioned accounts")
@@ -336,6 +383,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "login":
         return _cmd_login(args.email, args.api_url, args.cloudflare)
+    if args.command == "register":
+        return _cmd_register(args.email, args.api_url, args.cloudflare)
     if args.command == "logout":
         return _cmd_logout()
     session = _require_session(admin=args.command == "users")

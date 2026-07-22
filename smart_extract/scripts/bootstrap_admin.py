@@ -17,8 +17,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     with open_store() as store:
-        if store.list_users():
-            print("FAILED - accounts already exist; use 'sentinel users add' remotely.")
+        if any(row.get("role") == "admin" for row in store.list_users()):
+            print("FAILED - an administrator already exists; use 'sentinel users add' remotely.")
             return 1
 
     password = getpass.getpass("Password (12+ characters): ")

@@ -151,6 +151,31 @@ def require_admin(user: User = Depends(require_user)) -> User:
     return user
 
 
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=settings.auth_cookie_name,
+        value=token,
+        max_age=settings.auth_token_ttl_minutes * 60,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+
+
+def _register_tester(req: LoginRequest) -> tuple[User, str]:
+    if not settings.registration_enabled:
+        raise HTTPException(status_code=403, detail="Account registration is disabled.")
+    try:
+        user = create_user(req.email, req.password, "tester")
+        token = issue_session(user)
+    except AuthConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return user, token
+
+
 @app.post("/auth/login", response_model=UserResponse)
 def login(req: LoginRequest, response: Response) -> UserResponse:
     try:
@@ -160,16 +185,15 @@ def login(req: LoginRequest, response: Response) -> UserResponse:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except AuthConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    max_age = settings.auth_token_ttl_minutes * 60
-    response.set_cookie(
-        key=settings.auth_cookie_name,
-        value=token,
-        max_age=max_age,
-        httponly=True,
-        secure=settings.auth_cookie_secure,
-        samesite="lax",
-        path="/",
-    )
+    _set_session_cookie(response, token)
+    return UserResponse(id=user.id, email=user.email, role=user.role)
+
+
+@app.post("/auth/register", response_model=UserResponse, status_code=201)
+def register(req: LoginRequest, response: Response) -> UserResponse:
+    """Create a normal workspace account and sign in the browser."""
+    user, token = _register_tester(req)
+    _set_session_cookie(response, token)
     return UserResponse(id=user.id, email=user.email, role=user.role)
 
 
@@ -183,6 +207,17 @@ def token_login(req: LoginRequest) -> TokenResponse:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except AuthConfigurationError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return TokenResponse(
+        access_token=token,
+        expires_at=session_expires_at(token).isoformat(),
+        user=UserResponse(id=user.id, email=user.email, role=user.role),
+    )
+
+
+@app.post("/auth/register/token", response_model=TokenResponse, status_code=201)
+def token_register(req: LoginRequest) -> TokenResponse:
+    """Create a normal workspace account and sign in the remote CLI."""
+    user, token = _register_tester(req)
     return TokenResponse(
         access_token=token,
         expires_at=session_expires_at(token).isoformat(),

@@ -1,25 +1,39 @@
 import { useState } from "react";
-import { login } from "../api.js";
+import { login, register } from "../api.js";
 
 export default function Login({ onAuthenticated }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   async function submit(event) {
     event.preventDefault();
     if (!email.trim() || !password || busy) return;
+    if (creating && password !== confirmPassword) {
+      setError("Passwords do not match.");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      const user = await login(email.trim(), password);
+      const user = creating
+        ? await register(email.trim(), password)
+        : await login(email.trim(), password);
       onAuthenticated(user);
     } catch (err) {
       setError(err.message);
     } finally {
       setBusy(false);
     }
+  }
+
+  function switchMode() {
+    setCreating((value) => !value);
+    setConfirmPassword("");
+    setError("");
   }
 
   return (
@@ -39,8 +53,12 @@ export default function Login({ onAuthenticated }) {
         </div>
 
         <div className="auth-heading">
-          <h1 id="login-title">Sign in</h1>
-          <p>Use the account issued by the project administrator.</p>
+          <h1 id="login-title">{creating ? "Create account" : "Sign in"}</h1>
+          <p>
+            {creating
+              ? "Create your own private research workspace."
+              : "Sign in to your private research workspace."}
+          </p>
         </div>
 
         <form onSubmit={submit} className="auth-form">
@@ -59,15 +77,39 @@ export default function Login({ onAuthenticated }) {
             <span>Password</span>
             <input
               type="password"
-              autoComplete="current-password"
+              autoComplete={creating ? "new-password" : "current-password"}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
+              minLength={creating ? 12 : undefined}
               required
             />
           </label>
+          {creating && (
+            <label>
+              <span>Confirm password</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                minLength={12}
+                required
+              />
+            </label>
+          )}
           {error && <div className="auth-error" role="alert">{error}</div>}
           <button className="btn btn-primary auth-submit" disabled={busy}>
-            {busy ? "Signing in…" : "Sign in"}
+            {busy
+              ? (creating ? "Creating account..." : "Signing in...")
+              : (creating ? "Create account" : "Sign in")}
+          </button>
+          <button
+            type="button"
+            className="auth-switch"
+            disabled={busy}
+            onClick={switchMode}
+          >
+            {creating ? "Already have an account? Sign in" : "New here? Create an account"}
           </button>
         </form>
       </section>

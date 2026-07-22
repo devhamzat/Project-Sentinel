@@ -40,11 +40,10 @@ pytest -q                                        # smoke + lane tests
 ## Remote CLI
 
 The CLI is an HTTPS client. It does not need Neo4j, LLM, OCR, or server
-credentials on the user's computer. For a Cloudflare-protected deployment,
-install `cloudflared` and sign in once:
+credentials on the user's computer. Create an account and sign in immediately:
 
 ```bash
-sentinel login you@example.com --api-url https://sentinel.example.com/api
+sentinel register you@example.com --api-url https://sentinel.example.com/api --no-cloudflare
 sentinel ingest data/raw/2606.18246v1.pdf
 sentinel ingest data/photo/2606.18246v1_p1.png
 sentinel ask "Which papers use the SQuAD dataset?"
@@ -54,11 +53,12 @@ sentinel whoami
 sentinel logout
 ```
 
-For non-local URLs, `sentinel login` automatically opens the browser for
-Cloudflare Access and then prompts for the Sentinel password. Both expiring
-tokens and the API URL are stored in the operating-system credential manager;
-neither password is stored. Use `--no-cloudflare` only when the API is not
-behind Access. Local development defaults to `http://127.0.0.1:8000`.
+Use `sentinel login` on later sessions. The API URL and expiring Sentinel token
+are stored in the operating-system credential manager; the password is never
+stored. `--no-cloudflare` means the deployment uses Cloudflare Tunnel without
+Cloudflare Access. If Access is enabled, omit that flag and the CLI opens its
+browser login automatically. Local development defaults to
+`http://127.0.0.1:8000`.
 
 ## Web app (REST API + React dashboard)
 
@@ -76,10 +76,11 @@ the Python service layer (`smart_extract/service.py`).
 
 ## Authentication and test accounts
 
-The web API is private by default. Accounts are invite-only and stored in
-Neo4j; there is no public registration route. Before deployment, set a random
-`AUTH_SECRET`, the exact `CORS_ALLOWED_ORIGINS`, and `AUTH_COOKIE_SECURE=true`
-in the deployment environment.
+Accounts and their private workspaces are stored in Neo4j. Users can select
+**Create account** on the login screen or run `sentinel register`; self-created
+accounts always receive the `tester` role. Set `REGISTRATION_ENABLED=false` to
+close self-registration. Before deployment, set a random `AUTH_SECRET`, the
+exact `CORS_ALLOWED_ORIGINS`, and `AUTH_COOKIE_SECURE=true`.
 
 Create the first administrator once from a trusted shell on the API host:
 
@@ -87,7 +88,8 @@ Create the first administrator once from a trusted shell on the API host:
 python -m smart_extract.scripts.bootstrap_admin you@example.com
 ```
 
-Then all account management is remote and admin-only:
+The bootstrap remains server-only, but it still works if testers registered
+first. Administrators also have these remote account-management commands:
 
 ```bash
 sentinel login you@example.com --api-url https://sentinel.example.com/api
@@ -108,20 +110,19 @@ resets and account disabling invalidate Sentinel sessions immediately.
 Account-management routes verify the admin role again on the server; the CLI's
 local role check is only an early UX hint.
 
-Browser sessions use a signed token in an HttpOnly, SameSite cookie. Every API
-route except `/health`, `/auth/login`, and `/auth/token` requires a valid
-session. `/auth/token` is the CLI bearer-token exchange and is expected to sit
-behind Cloudflare Access in production. Dashboard counts, graph questions,
+Browser sessions use a signed token in an HttpOnly, SameSite cookie. The login,
+registration, and CLI token-exchange routes are public; data and administration
+routes require a valid Sentinel session. Dashboard counts, graph questions,
 semantic search, ingestion ownership, and browser chat history are scoped to
 the signed-in account.
 
 ## Cloudflare deployment boundary
 
-Create a Cloudflare Access application for the Sentinel hostname, allow only
-the exact tester emails, and map a Cloudflare Tunnel route to the reverse proxy
-serving React plus FastAPI. The CLI sends Cloudflare's token in
-`cf-access-token` and Sentinel's workspace token as `Authorization: Bearer ...`.
-Neo4j remains private and is never contacted by the CLI.
+Cloudflare Tunnel can expose Sentinel without maintaining a second user list in
+Cloudflare; Sentinel's own registration and login protect the data. Cloudflare
+Access is optional. If you enable it, configure one stable organization/domain
+policy instead of adding every Sentinel user individually. Neo4j remains
+private and is never contacted by the CLI.
 
 ## Evaluation (Chapter 4 numbers)
 

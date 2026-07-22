@@ -1,8 +1,8 @@
 """Authentication primitives and Neo4j-backed application users.
 
-The first administrator is provisioned from a trusted server shell; subsequent
-accounts use admin-protected API routes. There is deliberately no public
-registration endpoint. Passwords use Python's scrypt implementation and
+The first administrator is provisioned from a trusted server shell. Ordinary
+users may self-register as testers, while admin-protected routes manage account
+status and password resets. Passwords use Python's scrypt implementation and
 sessions are short-lived HMAC-signed tokens (HttpOnly cookies for browsers,
 bearer tokens for the remote CLI).
 """

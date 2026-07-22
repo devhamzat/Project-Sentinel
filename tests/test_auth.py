@@ -275,3 +275,66 @@ def test_api_prevents_admin_self_disable():
             "admin@example.com", api.UserActiveRequest(active=False), admin
         )
     assert exc_info.value.status_code == 400
+
+
+def test_api_registration_always_creates_tester(monkeypatch):
+    from smart_extract.auth import User
+    from smart_extract.api import main as api
+
+    seen = {}
+
+    def fake_create(email, password, role):
+        seen["values"] = (email, password, role)
+        return User(id="new-workspace", email=email, role=role)
+
+    monkeypatch.setattr(api.settings, "registration_enabled", True)
+    monkeypatch.setattr(api, "create_user", fake_create)
+    monkeypatch.setattr(api, "issue_session", lambda user: "token")
+    user, token = api._register_tester(api.LoginRequest(
+        email="new@example.com", password="long-enough-password"
+    ))
+    assert seen["values"] == (
+        "new@example.com", "long-enough-password", "tester"
+    )
+    assert user.role == "tester"
+    assert token == "token"
+
+
+def test_api_registration_can_be_disabled(monkeypatch):
+    from fastapi import HTTPException
+    from smart_extract.api import main as api
+
+    monkeypatch.setattr(api.settings, "registration_enabled", False)
+    with pytest.raises(HTTPException) as exc_info:
+        api._register_tester(api.LoginRequest(
+            email="new@example.com", password="long-enough-password"
+        ))
+    assert exc_info.value.status_code == 403
+
+
+def test_cli_register_creates_session_without_cloudflare_locally(monkeypatch):
+    from smart_extract.cli import main as cli
+    from smart_extract.cli.client import LoginResult
+
+    seen = {}
+
+    class FakeClient:
+        def __init__(self, api_url, cloudflare_token=None):
+            seen["client"] = (api_url, cloudflare_token)
+
+        def register(self, email, password):
+            seen["credentials"] = (email, password)
+            return LoginResult(
+                access_token="new-token",
+                expires_at="2030-01-01T00:00:00+00:00",
+                user={"id": "w", "email": email, "role": "tester"},
+            )
+
+    monkeypatch.setattr(cli, "RemoteClient", FakeClient)
+    monkeypatch.setattr(cli.getpass, "getpass", lambda *a: "long-enough-password")
+    monkeypatch.setattr(cli, "save_session", lambda value: seen.setdefault("session", value))
+    assert cli.main([
+        "register", "new@example.com", "--api-url", "http://127.0.0.1:8000"
+    ]) == 0
+    assert seen["credentials"] == ("new@example.com", "long-enough-password")
+    assert seen["session"].role == "tester"

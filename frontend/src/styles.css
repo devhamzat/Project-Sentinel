@@ -1500,6 +1500,19 @@ code, pre, .mono {
 
 .auth-submit { width: 100%; justify-content: center; margin-top: 0.25rem; }
 
+.auth-switch {
+  border: 0;
+  padding: 0.25rem;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.auth-switch:hover { text-decoration: underline; }
+.auth-switch:disabled { opacity: 0.6; cursor: default; }
+
 .sidebar-user {
   display: block;
   max-width: 100%;

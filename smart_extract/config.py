@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     auth_token_ttl_minutes: int = 720
     auth_cookie_secure: bool = False
     auth_cookie_name: str = "sentinel_session"
+    registration_enabled: bool = True
     cors_allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     max_upload_mb: int = 25
 

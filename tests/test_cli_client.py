@@ -89,3 +89,18 @@ def test_login_uses_token_endpoint():
     assert result.access_token == "token"
     assert http.calls[0][1].endswith("/auth/token")
     assert http.calls[0][2]["json"]["email"] == "a@example.com"
+
+
+def test_register_uses_registration_token_endpoint():
+    from smart_extract.cli.client import RemoteClient
+
+    http = FakeHttp(FakeResponse(201, {
+        "access_token": "new-token",
+        "expires_at": "2030-01-01T00:00:00+00:00",
+        "user": {"id": "w", "email": "new@example.com", "role": "tester"},
+    }))
+    result = RemoteClient("http://localhost:8000", http=http).register(
+        "new@example.com", "long-enough-password"
+    )
+    assert result.user["role"] == "tester"
+    assert http.calls[0][1].endswith("/auth/register/token")
