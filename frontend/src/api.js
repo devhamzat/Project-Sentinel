@@ -76,3 +76,20 @@ export function ingest(file) {
   form.append("file", file);
   return request("/ingest", { method: "POST", body: form });
 }
+
+// Gold labelling (admin-only research tooling — not a tester-facing feature).
+export function listGold() {
+  return request("/gold");
+}
+
+export function getGold(arxivId) {
+  return request(`/gold/${encodeURIComponent(arxivId)}`);
+}
+
+export function saveGold(arxivId, title, fields) {
+  return request(`/gold/${encodeURIComponent(arxivId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, fields }),
+  });
+}

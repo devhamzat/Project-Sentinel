@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.groq.com/openai/v1"
     llm_api_key: str = ""
     llm_model: str = "llama-3.1-8b-instant"
+    # Retry transient failures (dropped connections, rate limits, 5xx) so a
+    # single network blip doesn't silently drop a paper during evaluation.
+    llm_max_retries: int = 4
+    llm_retry_backoff: float = 1.0  # seconds; doubles each retry (1, 2, 4, ...)
 
     # --- Embedding seam (SPIKE: semantic retrieval, see docs/design-retrieve.md) ---
     # Embeddings often come from a DIFFERENT provider than chat (e.g. Groq serves

@@ -195,10 +195,19 @@ the frozen papers for the robustness evaluation.
 Phase 3: full extraction — content entities (method/dataset/metric), the USES
 relation, summaries; keep deterministic vs LLM fields separate; light validation.
 
-Phase 4: complete graph (all 5 node types, 4 edge types) + FastAPI backend + web
-dashboard + finish CLI + NL→Cypher query (`query/nl2cypher.py`) + evaluation
+Phase 4 (DONE): complete graph (all 5 node types, 4 edge types) + FastAPI backend
++ web dashboard + finish CLI + NL→Cypher query (`query/nl2cypher.py`) + evaluation
 (precision/recall/F1 on a hand-labelled gold set; digital vs photographed
 comparison). This phase's outputs and numbers become Chapter 4.
+
+**Status: all phases complete. Evaluation has been RUN.** 15 papers hand-labelled
+in `data/gold/`; real numbers computed and saved to `data/eval_results.json`
+(digital overall F1 0.880, photo 0.516 — the OCR-robustness drop). Gold labelling
+is done via an admin-only web page (`frontend/src/pages/Gold.jsx` +
+`smart_extract/service_gold.py` + `/gold` API routes) as well as the terminal
+helper. The LLM seam now retries transient failures so evaluation is reproducible.
+**For writing Chapter 4, the self-contained handoff (real numbers + honest
+caveats + framing consistent with Chapters 1–3) is `docs/chapter4-handoff.md`.**
 
 Always: write a small test alongside each module; keep modules importable and
 single-purpose; prefer many small increments over big rewrites.

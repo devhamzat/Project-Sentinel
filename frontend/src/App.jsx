@@ -3,6 +3,7 @@ import Dashboard from "./pages/Dashboard.jsx";
 import Ask from "./pages/Ask.jsx";
 import Ingest from "./pages/Ingest.jsx";
 import Settings from "./pages/Settings.jsx";
+import Gold from "./pages/Gold.jsx";
 import Login from "./pages/Login.jsx";
 import { useTheme } from "./useTheme.js";
 import { getMe, logout as endSession } from "./api.js";
@@ -63,11 +64,26 @@ function IconDocs() {
   );
 }
 
+function IconGold() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"
+      strokeLinecap="round" strokeLinejoin="round" className="tab-icon">
+      <path d="M3 4h10M3 8h10M3 12h6" />
+      <polyline points="11.5 11 13 12.5 15.5 9.5" />
+    </svg>
+  );
+}
+
 const TABS = [
   { id: "dashboard", label: "Dashboard", Icon: IconGraph    },
   { id: "ask",       label: "Ask",        Icon: IconAsk      },
   { id: "ingest",    label: "Ingest",     Icon: IconIngest   },
   { id: "settings",  label: "Settings",   Icon: IconSettings },
+];
+
+// Admin-only research tools, appended to the nav when the user is an admin.
+const ADMIN_TABS = [
+  { id: "gold", label: "Gold labelling", Icon: IconGold },
 ];
 
 export default function App() {
@@ -127,7 +143,7 @@ export default function App() {
 
         <nav className="sidebar-nav">
           <div className="nav-section-label">Navigation</div>
-          {TABS.map(({ id, label, Icon }) => (
+          {(user.role === "admin" ? [...TABS, ...ADMIN_TABS] : TABS).map(({ id, label, Icon }) => (
             <button
               key={id}
               className={`tab ${tab === id ? "active" : ""}`}
@@ -150,6 +166,7 @@ export default function App() {
         {tab === "ask"       && <Ask key={user.id} userId={user.id} onIngested={bumpStats} />}
         {tab === "ingest"    && <Ingest onIngested={bumpStats} />}
         {tab === "settings"  && <Settings theme={theme} setTheme={setTheme} user={user} onLogout={logout} />}
+        {tab === "gold" && user.role === "admin" && <Gold />}
       </main>
     </div>
   );

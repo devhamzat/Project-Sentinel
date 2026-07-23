@@ -6,8 +6,10 @@
 data/raw/*
 data/gold/*
 data/processed/*
+data/photo/*            # ~500 MB of photographed pages (regenerable eval input)
 !data/raw/.gitkeep
 !data/gold/.gitkeep
+# eval_results.json is small and IS the Chapter-4 result set — keep it tracked.
 
 # ---- python ----
 __pycache__/

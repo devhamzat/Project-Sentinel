@@ -16,12 +16,24 @@ Do NOT import the openai SDK or hardcode a model anywhere else.
 from __future__ import annotations
 
 import json
+import time
 from functools import lru_cache
 from typing import Any
 
-from openai import OpenAI
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    InternalServerError,
+    OpenAI,
+    RateLimitError,
+)
 
 from smart_extract.config import settings
+
+# Failures worth retrying: transient network drops, timeouts, rate limits, and
+# 5xx from the provider. Permanent errors (auth, bad request, model-not-found)
+# are NOT here so they fail fast instead of wasting retries.
+_RETRYABLE = (APIConnectionError, APITimeoutError, RateLimitError, InternalServerError)
 
 
 class LLMError(RuntimeError):
@@ -58,6 +70,34 @@ def _embed_client() -> OpenAI:
     return OpenAI(base_url=settings.embed_base_url, api_key=settings.embed_api_key)
 
 
+def _with_retries(call):
+    """Run ``call``, retrying transient failures with exponential backoff.
+
+    Groq's free tier (and any hosted endpoint) will occasionally drop a
+    connection or rate-limit under a burst of requests — exactly what happens
+    during evaluation, when we fire ~30 extractions back to back. Without this,
+    one blip silently dropped a paper from the scored set and skewed the
+    numbers. Retries make evaluation reproducible instead of luck-dependent.
+
+    Retryable errors only (see ``_RETRYABLE``); permanent ones raise at once.
+    All paths still end in ``LLMError`` so callers handle failure uniformly.
+    """
+    attempts = max(1, settings.llm_max_retries)
+    last: Exception | None = None
+    for i in range(attempts):
+        try:
+            return call()
+        except _RETRYABLE as exc:
+            last = exc
+            if i < attempts - 1:
+                time.sleep(settings.llm_retry_backoff * (2 ** i))
+        except Exception as exc:  # auth, bad request, model-not-found, etc.
+            raise LLMError(f"LLM request failed: {exc}") from exc
+    raise LLMError(
+        f"LLM request failed after {attempts} attempt(s): {last}"
+    ) from last
+
+
 def _chat(prompt: str, system: str | None, *, json_mode: bool = False) -> str:
     """Send a single-turn chat request and return the raw assistant text."""
     messages: list[dict[str, str]] = []
@@ -75,10 +115,7 @@ def _chat(prompt: str, system: str | None, *, json_mode: bool = False) -> str:
         # it, the caller still gets a clear LLMError below.
         kwargs["response_format"] = {"type": "json_object"}
 
-    try:
-        resp = _client().chat.completions.create(**kwargs)
-    except Exception as exc:  # network, auth, bad model name, etc.
-        raise LLMError(f"LLM request failed: {exc}") from exc
+    resp = _with_retries(lambda: _client().chat.completions.create(**kwargs))
 
     content = resp.choices[0].message.content
     if not content:

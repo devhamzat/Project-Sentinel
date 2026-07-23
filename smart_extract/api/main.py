@@ -22,6 +22,8 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from smart_extract import service
+from smart_extract import service_gold
+from smart_extract.service_gold import GoldError
 from smart_extract.auth import (
     AuthError,
     AuthConfigurationError,
@@ -376,6 +378,39 @@ def search(
             for c in result.chunks
         ],
     )
+
+
+class GoldSaveRequest(BaseModel):
+    title: str
+    fields: dict[str, list[str]]
+
+
+@app.get("/gold")
+def gold_list(_admin: User = Depends(require_admin)) -> list[dict]:
+    """List every gold file with labelling status (research tool, admin only)."""
+    return service_gold.list_gold()
+
+
+@app.get("/gold/{arxiv_id}")
+def gold_get(arxiv_id: str, _admin: User = Depends(require_admin)) -> dict:
+    """Load one gold paper with source text and per-value grounding evidence."""
+    try:
+        return service_gold.load_gold(arxiv_id)
+    except GoldError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@app.put("/gold/{arxiv_id}")
+def gold_save(
+    arxiv_id: str,
+    req: GoldSaveRequest,
+    _admin: User = Depends(require_admin),
+) -> dict:
+    """Persist a hand-corrected paper (strips the template marker)."""
+    try:
+        return service_gold.save_gold(arxiv_id, req.title, req.fields)
+    except GoldError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.post("/ingest")
