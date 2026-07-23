@@ -453,3 +453,42 @@ async def ingest(
         await file.close()
         if tmp_path and tmp_path.exists():
             tmp_path.unlink()
+
+
+# --- Serve the built React dashboard (production single-origin deployment) ---
+#
+# In dev the frontend runs on its own Vite server and proxies /api -> here, so
+# this block does nothing (no build dir). In production the Docker image builds
+# the frontend into ``frontend/dist`` and this mount serves it from the SAME
+# origin as the API — so cookies "just work" with no cross-origin CORS setup.
+#
+# It is added LAST, so every API route above still matches first. Unknown paths
+# fall back to index.html (client-side routing), EXCEPT anything that looks like
+# an API/doc path, which is left to 404 as JSON rather than returning HTML.
+def _mount_frontend() -> None:
+    from fastapi.responses import FileResponse
+    from fastapi.staticfiles import StaticFiles
+
+    dist = settings.frontend_dist_path
+    if not (dist / "index.html").exists():
+        return  # no build present (e.g. local dev) — leave the API bare
+
+    # Hashed asset files (JS/CSS) are served from /assets by the Vite build.
+    app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
+
+    index = dist / "index.html"
+    _non_spa = ("/auth", "/admin", "/gold", "/ask", "/search", "/ingest",
+                "/stats", "/health", "/docs", "/openapi.json", "/redoc")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa(full_path: str):
+        # Do not swallow real API 404s into the HTML shell.
+        if any(("/" + full_path).startswith(p) for p in _non_spa):
+            raise HTTPException(status_code=404, detail="Not found")
+        candidate = (dist / full_path).resolve()
+        if full_path and candidate.is_file() and dist.resolve() in candidate.parents:
+            return FileResponse(candidate)
+        return FileResponse(index)
+
+
+_mount_frontend()

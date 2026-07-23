@@ -1,7 +1,11 @@
-// The ONLY module that talks to the backend. All requests go through the Vite
-// /api proxy to the FastAPI REST API. No business logic lives here — just HTTP.
-
-const BASE = "/api";
+// The ONLY module that talks to the backend. No business logic lives here —
+// just HTTP.
+//
+// In dev, requests go to "/api/*" and Vite proxies them to the FastAPI backend
+// (see vite.config.js). In production the built frontend is served by FastAPI
+// itself (same origin), so the base is "" and requests hit "/auth/login" etc.
+// directly. Override via VITE_API_BASE at build time.
+const BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
 async function handle(res) {
   if (!res.ok) {

@@ -88,10 +88,22 @@ class Settings(BaseSettings):
     # --- Data ---
     data_dir: str = "data"
 
+    # --- Web (production single-origin serving) ---
+    # Directory holding the built React dashboard. When present, the API serves
+    # it from the same origin (see api/main.py). Absent in local dev, so the
+    # API stays bare and the Vite dev server handles the UI.
+    frontend_dist: str = "frontend/dist"
+
     @property
     def data_path(self) -> Path:
         """Absolute path to the data directory (relative paths resolve to repo root)."""
         p = Path(self.data_dir)
+        return p if p.is_absolute() else REPO_ROOT / p
+
+    @property
+    def frontend_dist_path(self) -> Path:
+        """Absolute path to the built frontend (relative paths resolve to repo root)."""
+        p = Path(self.frontend_dist)
         return p if p.is_absolute() else REPO_ROOT / p
 
     @property
